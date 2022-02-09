@@ -542,6 +542,12 @@ class DescriptorTbl {
       const TDescriptorTableSerialized& serialized_thrift_tbl,
       DescriptorTbl** tbl) WARN_UNUSED_RESULT;
 
+//modify by ff
+static Status CreateLocal(ObjectPool* pool, 
+    const TDescriptorTable& thrift_tbl,
+    const TDescriptorTableSerialized& serialized_thrift_tbl, 
+    DescriptorTbl** tbl) WARN_UNUSED_RESULT;
+
   /// Free memory allocated in Create().
   void ReleaseResources();
 
