@@ -228,6 +228,7 @@ Status HdfsScanPlanNode::Init(const TPlanNode& tnode, FragmentState* state) {
   overlap_predicate_descs_ = tnode.hdfs_scan_node.overlap_predicate_descs;
 
   RETURN_IF_ERROR(ProcessScanRangesAndInitSharedState(state));
+  //RETURN_IF_ERROR(ProcessLocalFileAndInitSharedState(state));
 
   state->CheckAndAddCodegenDisabledMessage(codegen_status_msgs_);
   return Status::OK();
@@ -284,8 +285,9 @@ Status HdfsScanPlanNode::ProcessScanRangesAndInitSharedState(FragmentState* stat
         file_desc->mtime = split.mtime();
         file_desc->file_compression = CompressionTypePBToThrift(split.file_compression());
         file_desc->file_format = partition_desc->file_format();
-        RETURN_IF_ERROR(HdfsFsCache::instance()->GetConnection(
-            native_file_path, &file_desc->fs, &fs_cache));
+//modify by ff
+//        RETURN_IF_ERROR(HdfsFsCache::instance()->GetConnection(
+//            native_file_path, &file_desc->fs, &fs_cache));
         shared_state_.per_type_files_[partition_desc->file_format()].push_back(file_desc);
       } else {
         // File already processed
@@ -316,6 +318,89 @@ Status HdfsScanPlanNode::ProcessScanRangesAndInitSharedState(FragmentState* stat
     ImpaladMetrics::NUM_RANGES_PROCESSED->Increment(ranges->second.scan_ranges().size());
     ImpaladMetrics::NUM_RANGES_MISSING_VOLUME_ID->Increment(num_ranges_missing_volume_id);
   }
+  // Set up the rest of the shared state.
+  shared_state_.remaining_scan_range_submissions_.Store(instance_ctx_pbs.size());
+  shared_state_.progress().Init(
+      Substitute("Splits complete (node=$0)", tnode_->node_id), total_splits);
+  shared_state_.use_mt_scan_node_ = tnode_->hdfs_scan_node.use_mt_scan_node;
+
+  // Distribute the work evenly for issuing initial scan ranges.
+  DCHECK(shared_state_.use_mt_scan_node_ || instance_ctx_pbs.size() == 1)
+      << "Non MT scan node should only have a single instance.";
+  auto instance_ctxs = state->instance_ctxs();
+  DCHECK_EQ(instance_ctxs.size(), instance_ctx_pbs.size());
+  int files_per_instance = file_descs.size() / instance_ctxs.size();
+  int remainder = file_descs.size() % instance_ctxs.size();
+  int num_lists = min(file_descs.size(), instance_ctxs.size());
+  auto fd_it = file_descs.begin();
+  for (int i = 0; i < num_lists; ++i) {
+    vector<HdfsFileDesc*>* curr_file_list =
+        &shared_state_
+             .file_assignment_per_instance_[instance_ctxs[i]->fragment_instance_id];
+    for (int j = 0; j < files_per_instance + (i < remainder); ++j) {
+      curr_file_list->push_back(fd_it->second);
+      ++fd_it;
+    }
+  }
+  DCHECK(fd_it == file_descs.end());
+  return Status::OK();
+}
+
+//modify by ff
+Status HdfsScanPlanNode::ProcessLocalFileAndInitSharedState(FragmentState* state) {
+  // Initialize the template tuple pool.
+  shared_state_.template_pool_.reset(new MemPool(state->query_mem_tracker()));
+  auto& template_tuple_map_ = shared_state_.partition_template_tuple_map_;
+  ObjectPool* obj_pool = shared_state_.obj_pool();
+  auto& file_descs = shared_state_.file_descs_;
+  HdfsFsCache::HdfsFsMap fs_cache;
+//  int num_ranges_missing_volume_id = 0;
+  int64_t total_splits = 0;
+  const vector<const PlanFragmentInstanceCtxPB*>& instance_ctx_pbs =
+      state->instance_ctx_pbs();
+
+      HdfsPartitionDescriptor* partition_desc =
+          hdfs_table_->GetPartition(0);
+      if (template_tuple_map_.find(0) == template_tuple_map_.end()) {
+        template_tuple_map_[0] =
+            InitTemplateTuple(partition_desc->partition_key_value_evals(),
+                shared_state_.template_pool_.get());
+      }
+      // Convert the ScanRangeParamsPB into per-file DiskIO::ScanRange objects and
+      // populate partition_ids_, file_descs_, and per_type_files_.
+      if (partition_desc == nullptr) {
+        // TODO: this should be a DCHECK but we sometimes hit it. It's likely IMPALA-1702.
+        LOG(ERROR) << "Bad table descriptor! table_id=" << hdfs_table_->id()
+                   << " partition_id=" << "0" << "\n"
+                   << PrintThrift(state->fragment())
+                   << state->fragment_ctx().DebugString();
+        return Status("Query encountered invalid metadata, likely due to IMPALA-1702."
+                      " Try rerunning the query.");
+      }
+
+      filesystem::path file_path(partition_desc->location());
+//      file_path.append(split.relative_path(), filesystem::path::codecvt());
+      const string& native_file_path = file_path.native();
+
+      auto file_desc_map_key = make_pair(partition_desc->id(), native_file_path);
+      HdfsFileDesc* file_desc = nullptr;
+      auto file_desc_it = file_descs.find(file_desc_map_key);
+      if (file_desc_it == file_descs.end()) {
+        // Add new file_desc to file_descs_ and per_type_files_
+        file_desc = obj_pool->Add(new HdfsFileDesc(native_file_path));
+        file_descs[file_desc_map_key] = file_desc;
+        file_desc->file_length = partition_desc->block_size();
+      //  file_desc->mtime = split.mtime();
+      //  file_desc->file_compression = CompressionTypePBToThrift(split.file_compression());
+        file_desc->file_format = partition_desc->file_format();
+        //RETURN_IF_ERROR(HdfsFsCache::instance()->GetConnection(
+        //    native_file_path, &file_desc->fs, &fs_cache));
+        shared_state_.per_type_files_[partition_desc->file_format()].push_back(file_desc);
+      } else {
+        // File already processed
+        file_desc = file_desc_it->second;
+      }
+ 
   // Set up the rest of the shared state.
   shared_state_.remaining_scan_range_submissions_.Store(instance_ctx_pbs.size());
   shared_state_.progress().Init(
@@ -528,7 +613,7 @@ Status HdfsScanNodeBase::Open(RuntimeState* state) {
   // Open stats conjuncts
   RETURN_IF_ERROR(ScalarExprEvaluator::Open(stats_conjunct_evals_, state));
 
-  RETURN_IF_ERROR(ClaimBufferReservation(state));
+  //RETURN_IF_ERROR(ClaimBufferReservation(state));
   reader_context_ = ExecEnv::GetInstance()->disk_io_mgr()->RegisterContext();
 
   // Initialize HdfsScanNode specific counters
@@ -772,6 +857,19 @@ Status HdfsScanNodeBase::StartNextScanRange(const std::vector<FilterContext>& fi
   }
   return Status::OK();
 }
+//modify by ff
+Status HdfsScanNodeBase::StartScanRange(const std::vector<FilterContext>& filter_ctxs,
+    int64_t* reservation, io::ScanRange** scan_range) {
+  DiskIoMgr* io_mgr = ExecEnv::GetInstance()->disk_io_mgr();
+  int64_t ideal_scan_range_reservation =
+      io_mgr->ComputeIdealBufferReservation((*scan_range)->bytes_to_read());
+  *reservation = IncreaseReservationIncrementally(*reservation, ideal_scan_range_reservation);
+  initial_range_ideal_reservation_stats_->UpdateCounter(ideal_scan_range_reservation);
+  initial_range_actual_reservation_stats_->UpdateCounter(*reservation);
+  RETURN_IF_ERROR(
+      io_mgr->AllocateBuffersForRange(buffer_pool_client(), *scan_range, *reservation));
+  return Status::OK();
+}
 
 int64_t HdfsScanNodeBase::IncreaseReservationIncrementally(int64_t curr_reservation,
       int64_t ideal_reservation) {
@@ -833,7 +931,7 @@ const CodegenFnPtrBase* HdfsScanNodeBase::GetCodegenFn(THdfsFileFormat::type typ
   if (it == codegend_fn_map_.end()) return nullptr;
   return &it->second;
 }
-
+//modify by ff
 Status HdfsScanNodeBase::CreateAndOpenScannerHelper(HdfsPartitionDescriptor* partition,
     ScannerContext* context, scoped_ptr<HdfsScanner>* scanner) {
   DCHECK(context != nullptr);
@@ -1166,6 +1264,12 @@ const HdfsFileDesc* ScanRangeSharedState::GetFileDesc(
   auto file_desc_map_key = make_pair(partition_id, filename);
   DCHECK(file_descs_.find(file_desc_map_key) != file_descs_.end());
   return file_descs_[file_desc_map_key];
+}
+//modify by ff
+void ScanRangeSharedState::SetFileDesc(int64_t partition_id, const std::string& filename, HdfsFileDesc* filesdesc) {
+  auto file_desc_map_key = make_pair(partition_id, filename);
+  DCHECK(file_descs_.find(file_desc_map_key) == file_descs_.end());
+  file_descs_[file_desc_map_key] = filesdesc;
 }
 
 void ScanRangeSharedState::SetFileMetadata(
