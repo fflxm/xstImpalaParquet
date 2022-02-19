@@ -198,6 +198,9 @@ class ScannerContext {
     /// indicate the error.
     bool ReadBytes(int64_t length, uint8_t** buf, Status* status, bool peek = false)
         WARN_UNUSED_RESULT;
+//modify by ff
+    bool ReadBytesLocal(int64_t length, uint8_t** buf, Status* status, bool peek = false)
+        WARN_UNUSED_RESULT;
 
     /// Read a Writable Text value from the supplied file. Returns true on success,
     /// otherwise returns false and sets 'status' to indicate the error.
