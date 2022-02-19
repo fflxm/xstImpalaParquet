@@ -23,7 +23,7 @@
 #include <mutex>
 
 #include <boost/thread/shared_mutex.hpp>
-//#include <gtest/gtest_prod.h> // for FRIEND_TEST
+#include <gtest/gtest_prod.h> // for FRIEND_TEST
 
 #include "common/atomic.h"
 #include "common/hdfs.h"
@@ -228,7 +228,7 @@ struct BufferOpts {
  private:
   friend class ScanRange;
   friend class HdfsFileReader;
-  //FRIEND_TEST(DataCacheTest, TestBasics);
+  FRIEND_TEST(DataCacheTest, TestBasics);
 
   BufferOpts(int cache_options, uint8_t* client_buffer,
       int64_t client_buffer_len)
@@ -264,6 +264,9 @@ class ScanRange : public RequestRange {
   static ScanRange* AllocateScanRange(ObjectPool* obj_pool, hdfsFS fs, const char* file,
       int64_t len, int64_t offset, std::vector<SubRange>&& sub_ranges, void* metadata,
       int disk_id, bool expected_local, int64_t mtime, const BufferOpts& buffer_opts);
+
+//modify by ff
+  void ReadFromLocal(uint8_t* data, int64_t len, RequestContext* reader_context);
 
   /// Resets this scan range object with the scan range description. The scan range
   /// is for bytes [offset, offset + len) in 'file' on 'fs' (which is nullptr for the
@@ -347,6 +350,9 @@ class ScanRange : public RequestRange {
     return scan_range_lock.owns_lock() && scan_range_lock.mutex() == &lock_;
   }
 
+//modify by ff
+  ReadOutcome DoReadLocal(DiskQueue* queue, int disk_id, bool use_local_buffer=false);
+
  private:
   DISALLOW_COPY_AND_ASSIGN(ScanRange);
 
@@ -355,7 +361,7 @@ class ScanRange : public RequestRange {
   friend class BufferDescriptor;
   friend class DiskQueue;
   friend class DiskIoMgr;
-  //friend class DiskIoMgrTest;
+  friend class DiskIoMgrTest;
   friend class RequestContext;
   friend class HdfsFileReader;
   friend class LocalFileReader;
