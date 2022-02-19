@@ -41,6 +41,8 @@
 #include "util/spinlock.h"
 #include "util/unique-id-hash.h"
 
+#include "gen-cpp/parquet_types.h"
+
 namespace impala {
 
 class ScannerContext;
@@ -128,6 +130,8 @@ class ScanRangeSharedState {
   /// Given a partition_id and filename returns the related file descriptor DCHECK ensures
   /// there is always file descriptor returned.
   const HdfsFileDesc* GetFileDesc(int64_t partition_id, const std::string& filename);
+//modify by ff
+  void SetFileDesc(int64_t partition_id, const std::string& filename, HdfsFileDesc* filesdesc);
 
   /// Sets the scanner specific metadata for 'partition_id' and 'filename'.
   /// Scanners can use this to store file header information. Thread safe.
@@ -329,6 +333,9 @@ class HdfsScanPlanNode : public ScanPlanNode {
   /// Processes all the scan range params for this scan node to create all the required
   /// file descriptors, update metrics and fill in all relevant state in 'shared_state_'.
   Status ProcessScanRangesAndInitSharedState(FragmentState* state);
+//modify by ff
+  Status ProcessLocalFileAndInitSharedState(FragmentState* state);
+
   /// Per scanner type codegen'd fn.
   /// The actual types of the functions differ so we use void* as the common type and
   /// reinterpret cast before calling the functions.
@@ -796,6 +803,10 @@ class HdfsScanNodeBase : public ScanNode {
   Status StartNextScanRange(const std::vector<FilterContext>& filter_ctxs,
       int64_t* reservation, io::ScanRange** scan_range);
 
+//modify by ff
+Status StartScanRange(const std::vector<FilterContext>& filter_ctxs,
+    int64_t* reservation, io::ScanRange** scan_range);
+
   /// Helper for the CreateAndOpenScanner() implementations in the subclass. Creates and
   /// opens a new scanner for this partition type. Depending on the outcome, the
   /// behaviour differs:
@@ -803,6 +814,7 @@ class HdfsScanNodeBase : public ScanNode {
   /// - If the scanner cannot be created, returns an error and does not set *scanner.
   /// - If the scanner is created but opening fails, returns an error and sets *scanner.
   ///   The caller is then responsible for closing the scanner.
+//modify by ff
   Status CreateAndOpenScannerHelper(HdfsPartitionDescriptor* partition,
       ScannerContext* context, boost::scoped_ptr<HdfsScanner>* scanner)
       WARN_UNUSED_RESULT;
