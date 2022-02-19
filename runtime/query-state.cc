@@ -334,9 +334,13 @@ int64_t QueryState::GetMaxReservation() {
 }
 
 //modify by ff
-Status QueryState::CreateFragmentStateMapLocal(const TExecPlanFragmentInfo* fragment_info) {
+Status QueryState::CreateFragmentStateMapLocal(const TExecPlanFragmentInfo* fragment_info, const ExecQueryFInstancesRequestPB* request) {
   memset(&fragment_info_, 0x0, sizeof(TExecPlanFragmentInfo));
   memcpy(&fragment_info_, fragment_info, sizeof(TExecPlanFragmentInfo));
+
+  exec_rpc_params_.mutable_fragment_instance_ctxs()->Swap(
+      const_cast<google::protobuf::RepeatedPtrField<impala::PlanFragmentInstanceCtxPB>*>(
+          &request->fragment_instance_ctxs()));
 
   return FragmentState::CreateFragmentStateMap(
       fragment_info_, exec_rpc_params_, this, fragment_state_map_);
