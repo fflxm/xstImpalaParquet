@@ -28,6 +28,7 @@
 #include "runtime/bufferpool/reservation-tracker.h"
 #include "runtime/descriptors.h" // for RowDescriptor
 #include "runtime/reservation-manager.h"
+#include "runtime/io/request-ranges.h"
 #include "util/runtime-profile-counters.h"
 #include "util/runtime-profile.h"
 
@@ -172,6 +173,8 @@ class ExecNode {
   /// Open() of their parent returns. The resource profile calculation in the frontend
   /// relies on this when computing the peak resources required for a query.
   virtual Status Open(RuntimeState* state) WARN_UNUSED_RESULT;
+//modify by ff
+  virtual Status OpenFile(RuntimeState* state, io::ScanRange* scan_range) {return Status::OK();};
 
   /// Retrieves rows and returns them via row_batch. Sets eos to true
   /// if subsequent calls will not retrieve any more rows.
