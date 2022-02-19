@@ -187,7 +187,7 @@ class QueryState {
     desc_tbl_ = desc_tbl;
   }
   //modify by ff
-  Status CreateFragmentStateMapLocal(const TExecPlanFragmentInfo* fragment_info);
+  Status CreateFragmentStateMapLocal(const TExecPlanFragmentInfo* fragment_info, const ExecQueryFInstancesRequestPB* request);
 
   /// Sets up state required for fragment execution: memory reservations, etc. Fails if
   /// resources could not be acquired. Acquires a backend resource refcount and returns
