@@ -69,8 +69,7 @@ bool ScanRange::EnqueueReadyBuffer(unique_ptr<BufferDescriptor> buffer) {
 
 Status ScanRange::GetNext(unique_ptr<BufferDescriptor>* buffer) {
   DCHECK(*buffer == nullptr);
-//modify by ff
-//  bool eosr;
+  bool eosr;
   {
     unique_lock<mutex> scan_range_lock(lock_);
     DCHECK(Validate(scan_range_lock)) << DebugString();
@@ -87,10 +86,9 @@ Status ScanRange::GetNext(unique_ptr<BufferDescriptor>* buffer) {
     }
     // Remove the first ready buffer from the queue and return it
     buffer_manager_->PopFirstReadyBuffer(scan_range_lock, buffer);
-//    eosr = (*buffer)->eosr();
+    eosr = (*buffer)->eosr();
   }
-//modify by ff
-//  if (eosr) reader_->RemoveActiveScanRange(this);
+  if (eosr) reader_->RemoveActiveScanRange(this);
   // Update tracking counters. The buffer has now moved from the IoMgr to the caller.
   buffer_manager_->add_buffers_in_reader(1);
   return Status::OK();
@@ -706,16 +704,16 @@ Status ScanRange::ReadFromCache(
 
 //modify by ff
 void ScanRange::ReadFromLocal(uint8_t* data, int64_t len, RequestContext* reader_context) {
-  unique_ptr<BufferDescriptor> desc = unique_ptr<BufferDescriptor>(new BufferDescriptor(this, data, 0));
-  desc->len_ = len;
-  desc->eosr_ = true;
+//  unique_ptr<BufferDescriptor> desc = unique_ptr<BufferDescriptor>(new BufferDescriptor(this, data, 0));
+//  desc->len_ = len;
+//  desc->eosr_ = true;
 
 //  reader_ = reader_context;
 //  unique_lock<mutex> lock(lock_);
 //  reader_->AddActiveScanRangeLocked(lock, this);
 
-  buffer_manager_->set_cached_buffer();
-  EnqueueReadyBuffer(move(desc));
+  buffer_manager_->set_client_buffer();
+//  EnqueueReadyBuffer(move(desc));
 }
 
 Status ScanRange::AllocateBuffersForRange(
