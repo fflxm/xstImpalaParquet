@@ -46,7 +46,7 @@ class DescriptorTblBuilder {
   DescriptorTblBuilder(Frontend* fe, ObjectPool* object_pool);
 //mdofiby by ff
   DescriptorTblBuilder(ObjectPool* object_pool);
-
+  
   TupleDescBuilder& DeclareTuple();
 
   // Allows to set a TableDescriptor on TDescriptorTable.
@@ -56,7 +56,7 @@ class DescriptorTblBuilder {
   DescriptorTbl* Build();
 //modify by ff
   DescriptorTbl* BuildLocal();
-
+  
  private:
   /// Both owned by caller.
   Frontend* fe_;
