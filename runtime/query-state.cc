@@ -180,9 +180,7 @@ Status QueryState::Init(const ExecQueryFInstancesRequestPB* exec_rpc_params,
   RETURN_IF_ERROR(DebugAction(query_options(), "QUERY_STATE_INIT"));
 
   ExecEnv* exec_env = ExecEnv::GetInstance();
-
-//modify by ff
-/*
+/*modify by ff
   RuntimeProfile* jvm_host_profile = RuntimeProfile::Create(&obj_pool_, "JVM");
   host_profile_->AddChild(jvm_host_profile);
 
@@ -333,19 +331,6 @@ int64_t QueryState::GetMaxReservation() {
   return max_reservation;
 }
 
-//modify by ff
-Status QueryState::CreateFragmentStateMapLocal(const TExecPlanFragmentInfo* fragment_info, const ExecQueryFInstancesRequestPB* request) {
-  memset(&fragment_info_, 0x0, sizeof(TExecPlanFragmentInfo));
-  memcpy(&fragment_info_, fragment_info, sizeof(TExecPlanFragmentInfo));
-
-  exec_rpc_params_.mutable_fragment_instance_ctxs()->Swap(
-      const_cast<google::protobuf::RepeatedPtrField<impala::PlanFragmentInstanceCtxPB>*>(
-          &request->fragment_instance_ctxs()));
-
-  return FragmentState::CreateFragmentStateMap(
-      fragment_info_, exec_rpc_params_, this, fragment_state_map_);
-}
-
 Status QueryState::InitBufferPoolState() {
   ExecEnv* exec_env = ExecEnv::GetInstance();
   int64_t max_reservation = GetMaxReservation();
@@ -494,6 +479,11 @@ Status QueryState::GetFInstanceState(
   auto it = fis_map_.find(instance_id);
   *fi_state = it != fis_map_.end() ? it->second : nullptr;
   return Status::OK();
+}
+//modify by ff
+Status QueryState::CreateFragmentStateMapLocal(TExecPlanFragmentInfo* fragment_info, ExecQueryFInstancesRequestPB* request) {
+  return FragmentState::CreateFragmentStateMap(
+      *fragment_info, *request, this, fragment_state_map_);
 }
 
 int64_t QueryState::AsyncCodegenThreadHelper(const std::string& suffix) const {
@@ -688,8 +678,8 @@ bool QueryState::ReportExecStatus() {
   // without the profile so that the coordinator can still get the status and won't
   // conclude that the backend has hung and cancel the query.
   if (profile_buf != nullptr) {
-    unique_ptr<kudu::faststring> sidecar_buf = make_unique<kudu::faststring>();
-    sidecar_buf->assign_copy(profile_buf, profile_len);
+    kudu::faststring sidecar_buf;
+    sidecar_buf.assign_copy(profile_buf, profile_len);
     unique_ptr<RpcSidecar> sidecar = RpcSidecar::FromFaststring(move(sidecar_buf));
 
     int sidecar_idx;
