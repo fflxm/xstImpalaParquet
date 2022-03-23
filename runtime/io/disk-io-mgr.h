@@ -147,7 +147,7 @@ class DiskQueue;
 /// In case a), ReturnBuffer() may re-enqueue the buffer for GetNext() to return again if
 /// needed. E.g. if 24MB of buffers were allocated to read a 64MB scan range, each buffer
 /// must be returned multiple times. Callers must be careful to call ReturnBuffer() with
-/// the previous buffer returned from the range before calling before GetNext() so that
+/// the previous buffer returned from the range before calling GetNext() so that
 /// at least one buffer is available for the I/O mgr to read data into. Calling GetNext()
 /// when the scan range has no buffers to read data into causes a resource deadlock.
 /// NB: if the scan range was allocated N buffers, then it's always ok for the caller
@@ -254,7 +254,9 @@ class DiskIoMgr : public CacheLineAligned {
   virtual ~DiskIoMgr();
 
   /// Initialize the IoMgr. Must be called once before any of the other APIs.
-  Status Init() WARN_UNUSED_RESULT;
+//modify by ff "add threadnum"
+//  Status Init() WARN_UNUSED_RESULT;
+  Status Init(int threadnum=0) WARN_UNUSED_RESULT;
 
 
   /// Allocates tracking structure for a request context.
@@ -333,8 +335,14 @@ class DiskIoMgr : public CacheLineAligned {
   /// The disk ID (and therefore disk_queues_ index) used for GCS accesses.
   int RemoteGcsDiskId() const { return num_local_disks() + REMOTE_GCS_DISK_OFFSET; }
 
+  /// The disk ID (and therefore disk_queues_ index) used for COS accesses.
+  int RemoteCosDiskId() const { return num_local_disks() + REMOTE_COS_DISK_OFFSET; }
+
   /// The disk ID (and therefore disk_queues_ index) used for Ozone accesses.
   int RemoteOzoneDiskId() const { return num_local_disks() + REMOTE_OZONE_DISK_OFFSET; }
+
+  /// The disk ID (and therefore disk_queues_ index) used for SFS accesses.
+  int RemoteSFSDiskId() const { return num_local_disks() + REMOTE_SFS_DISK_OFFSET; }
 
   /// Dumps the disk IoMgr queues (for readers and disks)
   std::string DebugString();
@@ -355,22 +363,19 @@ class DiskIoMgr : public CacheLineAligned {
   void ReleaseExclusiveHdfsFileHandle(std::unique_ptr<ExclusiveHdfsFileHandle> fid);
 
   /// Given a FS handle, name and last modified time of the file, gets a
-  /// CachedHdfsFileHandle from the file handle cache and returns it via 'fid'.
-  /// Records the time spent opening the handle in 'reader'. On success, records
-  /// statistics about whether this was a cache hit or miss in the 'reader' as well as
-  /// at the system level. In case of an error, returns status and 'fid' is untouched.
-  Status GetCachedHdfsFileHandle(const hdfsFS& fs,
-      std::string* fname, int64_t mtime, RequestContext* reader,
-      CachedHdfsFileHandle** fid) WARN_UNUSED_RESULT;
-
-  /// Releases a file handle back to the file handle cache when it is no longer in use.
-  void ReleaseCachedHdfsFileHandle(std::string* fname, CachedHdfsFileHandle* fid);
+  /// CachedHdfsFileHandle accessor from the file handle cache and returns it via
+  /// 'accessor'. Records the time spent opening the handle in 'reader'. On success,
+  /// records statistics about whether this was a cache hit or miss in the 'reader' as
+  /// well as at the system level. In case of an error, returns status and 'accessor' is
+  /// untouched.
+  Status GetCachedHdfsFileHandle(const hdfsFS& fs, std::string* fname, int64_t mtime,
+      RequestContext* reader, FileHandleCache::Accessor* accessor) WARN_UNUSED_RESULT;
 
   /// Reopens a file handle by destroying the file handle and getting a fresh
-  /// file handle from the cache. Records the time spent reopening the handle
+  /// file handle accessor from the cache. Records the time spent reopening the handle
   /// in 'reader'. Returns an error if the file could not be reopened.
   Status ReopenCachedHdfsFileHandle(const hdfsFS& fs, std::string* fname, int64_t mtime,
-      RequestContext* reader, CachedHdfsFileHandle** fid) WARN_UNUSED_RESULT;
+      RequestContext* reader, FileHandleCache::Accessor* accessor) WARN_UNUSED_RESULT;
 
   // Function to change the underlying LocalFileSystem object used for disk I/O.
   // DiskIoMgr will also take responsibility of the received LocalFileSystem pointer.
@@ -390,9 +395,11 @@ class DiskIoMgr : public CacheLineAligned {
     REMOTE_ADLS_DISK_OFFSET,
     REMOTE_ABFS_DISK_OFFSET,
     REMOTE_GCS_DISK_OFFSET,
+    REMOTE_COS_DISK_OFFSET,
     REMOTE_OZONE_DISK_OFFSET,
     REMOTE_DFS_DISK_FILE_OPER_OFFSET,
     REMOTE_S3_DISK_FILE_OPER_OFFSET,
+    REMOTE_SFS_DISK_OFFSET,
     REMOTE_OSS_DISK_OFFSET,
     REMOTE_NUM_DISKS
   };
