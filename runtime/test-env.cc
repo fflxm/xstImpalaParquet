@@ -49,21 +49,26 @@ TestEnv::TestEnv()
     buffer_pool_min_buffer_len_(64 * 1024),
     buffer_pool_capacity_(0) {}
 
-Status TestEnv::Init() {
+//modify by ff "add threadnum"
+//Status TestEnv::Init() {
+Status TestEnv::Init(int threadnum) {
   if (static_metrics_ == NULL) {
     static_metrics_.reset(new MetricGroup("test-env-static-metrics"));
     ImpaladMetrics::CreateMetrics(static_metrics_.get());
-// modify by ff 
+//modify by ff
 //    RETURN_IF_ERROR(RegisterMemoryMetrics(static_metrics_.get(), true, nullptr, nullptr));
     RETURN_IF_ERROR(RegisterMemoryMetrics(static_metrics_.get(), false, nullptr, nullptr));
     ImpaladMetrics::CreateMetrics(
         static_metrics_->GetOrCreateChildGroup("impala-server"));
   }
-// modify by ff 
+
+//modify by ff
 //  exec_env_.reset(new ExecEnv);
   exec_env_.reset(new ExecEnv(true));
   // Populate the ExecEnv state that the backend tests need.
-  RETURN_IF_ERROR(exec_env_->disk_io_mgr()->Init());
+//modify by ff "add threadnum"
+//  RETURN_IF_ERROR(exec_env_->disk_io_mgr()->Init());
+  RETURN_IF_ERROR(exec_env_->disk_io_mgr()->Init(threadnum));
   exec_env_->tmp_file_mgr_.reset(new TmpFileMgr);
   if (have_tmp_file_mgr_args_) {
     RETURN_IF_ERROR(tmp_file_mgr()->InitCustom(tmp_dirs_, one_tmp_dir_per_device_,
@@ -80,6 +85,7 @@ Status TestEnv::Init() {
   } else {
     exec_env_->mem_tracker_.reset(new MemTracker(process_mem_limit_, "Process"));
   }
+
   // Initialize RpcMgr and control service.
   IpAddr ip_address;
   RETURN_IF_ERROR(HostnameToIpAddr(FLAGS_hostname, &ip_address));
@@ -87,6 +93,7 @@ Status TestEnv::Init() {
   RETURN_IF_ERROR(exec_env_->rpc_mgr_->Init(exec_env_->krpc_address_));
   exec_env_->control_svc_.reset(new ControlService(exec_env_->rpc_metrics_));
   RETURN_IF_ERROR(exec_env_->control_svc_->Init());
+
   return Status::OK();
 }
 
