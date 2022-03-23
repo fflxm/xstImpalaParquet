@@ -56,7 +56,9 @@ class TestEnv {
   void SetDefaultFS(const string& fs) { exec_env_->default_fs_ = fs; }
 
   /// Initialize the TestEnv with the specified arguments.
-  Status Init();
+//modify by ff "add threadnum"
+//Status Init() {
+  Status Init(int threadnum = 0);
 
   /// Create a QueryState and a RuntimeState for a query with the given query options.
   /// The states are owned by the TestEnv. Returns an error if CreateQueryState() has
