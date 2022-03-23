@@ -76,6 +76,10 @@ class HdfsScanNode : public HdfsScanNodeBase {
 
   virtual Status Prepare(RuntimeState* state) override WARN_UNUSED_RESULT;
   virtual Status Open(RuntimeState* state) override WARN_UNUSED_RESULT;
+// modify by ff
+  Status OpenLocal(RuntimeState* state);
+  Status ScannerLocal(RuntimeState* state, vector<FilterContext> filter_ctxs, io::ScanRange* pScanRange, int64_t scanner_thread_reservation);
+
   virtual Status GetNext(RuntimeState* state, RowBatch* row_batch, bool* eos) override
       WARN_UNUSED_RESULT;
   virtual void Close(RuntimeState* state) override;
@@ -110,9 +114,6 @@ class HdfsScanNode : public HdfsScanNodeBase {
   virtual ExecutionModel getExecutionModel() const override {
     return NON_TASK_BASED_SYNC;
   }
-
-  //modify by ff
-  Status ScannerLocal(io::ScanRange* scan_range, int64_t* scanner_thread_reservation);
 
  protected:
   /// Fetches the next range to be read from the reader context. As a side effect, the
