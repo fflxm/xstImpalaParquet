@@ -136,8 +136,14 @@ DEFINE_int32(num_adls_io_threads, 16, "Number of ADLS I/O threads");
 // The maximum number of GCS I/O threads. TODO: choose the default empirically.
 DEFINE_int32(num_gcs_io_threads, 16, "Number of GCS I/O threads");
 
+// The maximum number of GCS I/O threads. TODO: choose the default empirically.
+DEFINE_int32(num_cos_io_threads, 16, "Number of COS I/O threads");
+
 // The maximum number of Ozone I/O threads. TODO: choose the default empirically.
 DEFINE_int32(num_ozone_io_threads, 16, "Number of Ozone I/O threads");
+
+// The maximum number of SFS I/O threads.
+DEFINE_int32(num_sfs_io_threads, 16, "Number of SFS I/O threads");
 
 // The number of cached file handles defines how much memory can be used per backend for
 // caching frequently used file handles. Measurements indicate that a single file handle
@@ -454,8 +460,12 @@ DiskIoMgr::~DiskIoMgr() {
   if (remote_data_cache_) remote_data_cache_->ReleaseResources();
 }
 
-Status DiskIoMgr::Init() {
-  for (int i = 0; i < disk_queues_.size(); ++i) {
+//modify by ff "add threadnum"
+//Status DiskIoMgr::Init() {
+Status DiskIoMgr::Init(int threadnum) {
+  if (threadnum <= 0) threadnum = disk_queues_.size();
+//  for (int i = 0; i < disk_queues_.size(); ++i) {
+  for (int i = 0; i < threadnum; ++i) {
     disk_queues_[i] = new DiskQueue(i);
     int num_threads_per_disk;
     string device_name;
@@ -477,6 +487,9 @@ Status DiskIoMgr::Init() {
     } else if (i == RemoteGcsDiskId()) {
       num_threads_per_disk = FLAGS_num_gcs_io_threads;
       device_name = "GCS remote";
+    }  else if (i == RemoteCosDiskId()) {
+      num_threads_per_disk = FLAGS_num_cos_io_threads;
+      device_name = "COS remote";
     } else if (i == RemoteOzoneDiskId()) {
       num_threads_per_disk = FLAGS_num_ozone_io_threads;
       device_name = "Ozone remote";
@@ -486,6 +499,9 @@ Status DiskIoMgr::Init() {
     } else if (i == RemoteS3DiskFileOperId()) {
       num_threads_per_disk = FLAGS_num_s3_file_oper_io_threads;
       device_name = "S3 remote file operations";
+    } else if (i == RemoteSFSDiskId()) {
+      num_threads_per_disk = FLAGS_num_sfs_io_threads;
+      device_name = "SFS remote";
     } else if (DiskInfo::is_rotational(i)) {
       num_threads_per_disk = num_io_threads_per_rotational_disk_;
       // During tests, i may not point to an existing disk.
@@ -496,6 +512,7 @@ Status DiskIoMgr::Init() {
       device_name = i < DiskInfo::num_disks() ? DiskInfo::device_name(i) : to_string(i);
     }
     const string& i_string = Substitute("$0", i);
+
     // Unit tests may create multiple DiskIoMgrs, so we need to avoid re-registering the
     // same metrics.
     if (!TestInfo::is_test()
@@ -505,11 +522,13 @@ Status DiskIoMgr::Init() {
       ImpaladMetrics::IO_MGR_METRICS->AddProperty<string>(
           DEVICE_NAME_METRIC_KEY_TEMPLATE, device_name, i_string);
     }
+
     HistogramMetric* read_latency = nullptr;
     HistogramMetric* read_size = nullptr;
     HistogramMetric* write_latency = nullptr;
     HistogramMetric* write_size = nullptr;
     IntCounter* write_io_err = nullptr;
+
     if (TestInfo::is_test()) {
       read_latency =
         ImpaladMetrics::IO_MGR_METRICS->FindMetricForTesting<HistogramMetric>(
@@ -528,6 +547,7 @@ Status DiskIoMgr::Init() {
 
     int64_t ONE_HOUR_IN_NS = 60L * 60L * NANOS_PER_SEC;
     int64_t ONE_GB = 1024L * 1024L * 1024L;
+
     if (read_latency == nullptr) {
       read_latency = ImpaladMetrics::IO_MGR_METRICS->RegisterMetric(
           new HistogramMetric(MetricDefs::Get(READ_LATENCY_METRIC_KEY_TEMPLATE, i_string),
@@ -550,6 +570,7 @@ Status DiskIoMgr::Init() {
       write_io_err = ImpaladMetrics::IO_MGR_METRICS->RegisterMetric(
           new IntCounter(MetricDefs::Get(WRITE_IO_ERR_METRIC_KEY_TEMPLATE, i_string), 0));
     }
+
     disk_queues_[i]->set_read_latency(read_latency);
     disk_queues_[i]->set_read_size(read_size);
     disk_queues_[i]->set_write_latency(write_latency);
@@ -565,12 +586,12 @@ Status DiskIoMgr::Init() {
       disk_thread_group_.AddThread(move(t));
     }
   }
-//modify by ff 
   // The file handle cache depends on the HDFS monitor, so initialize it first.
   // Use the same number of threads for the HDFS monitor as there are Disk IO threads.
-/*
   RETURN_IF_ERROR(hdfs_monitor_.Init(disk_thread_group_.Size()));
   RETURN_IF_ERROR(file_handle_cache_.Init());
+
+/*modify by ff
   cached_read_options_ = hadoopRzOptionsAlloc();
   DCHECK(cached_read_options_ != nullptr);
   // Disable checksumming for cached reads.
@@ -579,11 +600,11 @@ Status DiskIoMgr::Init() {
   // Disable automatic fallback for cached reads.
   ret = hadoopRzOptionsSetByteBufferPool(cached_read_options_, nullptr);
   DCHECK_EQ(ret, 0);
+*/
   if (!FLAGS_data_cache.empty()) {
     remote_data_cache_.reset(new DataCache(FLAGS_data_cache));
     RETURN_IF_ERROR(remote_data_cache_->Init());
   }
-*/
   return Status::OK();
 }
 
@@ -813,7 +834,9 @@ int DiskIoMgr::AssignQueue(
     if (IsADLSPath(file, check_default_fs)) return RemoteAdlsDiskId();
     if (IsOSSPath(file, check_default_fs)) return RemoteOSSDiskId();
     if (IsGcsPath(file, check_default_fs)) return RemoteGcsDiskId();
+    if (IsCosPath(file, check_default_fs)) return RemoteCosDiskId();
     if (IsOzonePath(file, check_default_fs)) return RemoteOzoneDiskId();
+    if (IsSFSPath(file, check_default_fs)) return RemoteSFSDiskId();
   }
   // Assign to a local disk queue.
   DCHECK(!IsS3APath(file, check_default_fs)); // S3 is always remote.
@@ -821,7 +844,9 @@ int DiskIoMgr::AssignQueue(
   DCHECK(!IsADLSPath(file, check_default_fs)); // ADLS is always remote.
   DCHECK(!IsOSSPath(file, check_default_fs)); // OSS/JindoFS is always remote.
   DCHECK(!IsGcsPath(file, check_default_fs)); // GCS is always remote.
+  DCHECK(!IsCosPath(file, check_default_fs)); // COS is always remote.
   DCHECK(!IsOzonePath(file, check_default_fs)); // Ozone is always remote.
+  DCHECK(!IsSFSPath(file, check_default_fs)); // SFS is always remote.
   if (disk_id == -1) {
     // disk id is unknown, assign it an arbitrary one.
     disk_id = next_disk_id_.Add(1);
@@ -853,14 +878,12 @@ void DiskIoMgr::ReleaseExclusiveHdfsFileHandle(unique_ptr<ExclusiveHdfsFileHandl
   fid.reset();
 }
 
-Status DiskIoMgr::GetCachedHdfsFileHandle(const hdfsFS& fs,
-    std::string* fname, int64_t mtime, RequestContext *reader,
-    CachedHdfsFileHandle** handle_out) {
+Status DiskIoMgr::GetCachedHdfsFileHandle(const hdfsFS& fs, std::string* fname,
+    int64_t mtime, RequestContext* reader, FileHandleCache::Accessor* accessor) {
   bool cache_hit;
   SCOPED_TIMER(reader->open_file_timer_);
-  RETURN_IF_ERROR(file_handle_cache_.GetFileHandle(fs, fname, mtime, false, handle_out,
-      &cache_hit));
-  ImpaladMetrics::IO_MGR_NUM_FILE_HANDLES_OUTSTANDING->Increment(1L);
+  RETURN_IF_ERROR(
+      file_handle_cache_.GetFileHandle(fs, fname, mtime, false, accessor, &cache_hit));
   if (cache_hit) {
     ImpaladMetrics::IO_MGR_CACHED_FILE_HANDLES_HIT_RATIO->Update(1L);
     ImpaladMetrics::IO_MGR_CACHED_FILE_HANDLES_HIT_COUNT->Increment(1L);
@@ -873,24 +896,17 @@ Status DiskIoMgr::GetCachedHdfsFileHandle(const hdfsFS& fs,
   return Status::OK();
 }
 
-void DiskIoMgr::ReleaseCachedHdfsFileHandle(std::string* fname,
-    CachedHdfsFileHandle* fid) {
-  file_handle_cache_.ReleaseFileHandle(fname, fid, false);
-  ImpaladMetrics::IO_MGR_NUM_FILE_HANDLES_OUTSTANDING->Increment(-1L);
-}
-
 Status DiskIoMgr::ReopenCachedHdfsFileHandle(const hdfsFS& fs, std::string* fname,
-    int64_t mtime, RequestContext* reader, CachedHdfsFileHandle** fid) {
+    int64_t mtime, RequestContext* reader, FileHandleCache::Accessor* accessor) {
   bool cache_hit;
   SCOPED_TIMER(reader->open_file_timer_);
   ImpaladMetrics::IO_MGR_CACHED_FILE_HANDLES_REOPENED->Increment(1L);
-  file_handle_cache_.ReleaseFileHandle(fname, *fid, true);
-  // The old handle has been destroyed, so *fid must be overwritten before returning.
-  *fid = nullptr;
-  Status status = file_handle_cache_.GetFileHandle(fs, fname, mtime, true, fid,
-      &cache_hit);
+
+  accessor->Destroy();
+
+  Status status =
+      file_handle_cache_.GetFileHandle(fs, fname, mtime, true, accessor, &cache_hit);
   if (!status.ok()) {
-    ImpaladMetrics::IO_MGR_NUM_FILE_HANDLES_OUTSTANDING->Increment(-1L);
     return status;
   }
   DCHECK(!cache_hit);
