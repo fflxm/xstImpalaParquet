@@ -31,12 +31,11 @@ DescriptorTblBuilder::DescriptorTblBuilder(Frontend* fe, ObjectPool* obj_pool)
   DCHECK(fe != NULL);
   DCHECK(obj_pool_ != NULL);
 }
-
+//modify by ff
 DescriptorTblBuilder::DescriptorTblBuilder(ObjectPool* obj_pool)
   : fe_(nullptr), obj_pool_(obj_pool) {
   DCHECK(obj_pool_ != NULL);
 }
-
 TupleDescBuilder& DescriptorTblBuilder::DeclareTuple() {
   TupleDescBuilder* tuple_builder = obj_pool_->Add(new TupleDescBuilder());
   tuples_descs_.push_back(tuple_builder);
@@ -76,6 +75,8 @@ DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
 
   vector<TTupleDescriptor>  vtuple;
   vector<TSlotDescriptor>  slot;
+  vector<TColumnDescriptor> vtcc;
+  TColumnDescriptor tcc;
 
 //  TBuildTestDescriptorTableParams params;
   for (int i = 0; i < tuples_descs_.size(); ++i) {
@@ -90,13 +91,17 @@ DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
       tslot.__set_parent((TTupleId) 0);
 //      tslot.__set_itemTupleId((TTupleId) 110501);
       tslot.__set_slotType(slot_type.ToThrift());
-      tslot.__set_materializedPath(vector<int32_t>(1,0));
+      tslot.__set_materializedPath(vector<int32_t>(1,i));
       slot.push_back(tslot);
+
+      memset(&tcc, 0x0, sizeof(TColumnDescriptor));
+      tcc.__set_type(slot_type.ToThrift());
+      vtcc.push_back(tcc);
     }
     //create tuples
     TTupleDescriptor ttuple;
     ttuple.__set_id((TTupleId) 0);
-    ttuple.__set_byteSize(32);
+    ttuple.__set_byteSize(1105);
     ttuple.__set_numNullBytes(0);
     ttuple.__set_tableId((TTableId) 0);
     ttuple.__set_tuplePath(vector<int32_t>(1,0));
@@ -104,11 +109,13 @@ DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
   }
   thrift_desc_tbl_.__set_slotDescriptors(slot);
   thrift_desc_tbl_.__set_tupleDescriptors(vtuple);
+  for(int j=0; j<thrift_desc_tbl_.tableDescriptors.size(); j++){
+    thrift_desc_tbl_.tableDescriptors[j].__set_columnDescriptors(vtcc);
+  }
 
   DescriptorTbl* desc_tbl;
   Status status = DescriptorTbl::CreateInternal(obj_pool_, thrift_desc_tbl_, &desc_tbl);
   DCHECK(status.ok()) << status.GetDetail();
   return desc_tbl;
 }
-
 }
