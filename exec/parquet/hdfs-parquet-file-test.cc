@@ -1,25 +1,9 @@
-// Licensed to the Apache Software Foundation (ASF) under one
-// or more contributor license agreements.  See the NOTICE file
-// distributed with this work for additional information
-// regarding copyright ownership.  The ASF licenses this file
-// to you under the Apache License, Version 2.0 (the
-// "License"); you may not use this file except in compliance
-// with the License.  You may obtain a copy of the License at
-//
-//   http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
-
 #include <snappy.h>
 #include <iostream>
 #include <sstream>
 #include <vector>
 #include <gflags/gflags.h>
+
 #include "gen-cpp/parquet_types.h"
 #include "gen-cpp/Types_types.h"
 #include "gen-cpp/PlanNodes_types.h"
@@ -43,11 +27,14 @@
 #include "util/disk-info.h"
 #include "util/codec.h"
 #include "util/rle-encoding.h"
+#include "util/thrift-debug-util.h"
 
 #include "common/names.h"
 #include "common/object-pool.h"
 #include "common/status.h"
 #include "common/init.h"
+
+#include "testutil/desc-tbl-builder.h"
 
 #include "exec/exec-node.h"
 #include "exec/hdfs-scan-node-base.h"
@@ -58,94 +45,134 @@ using namespace impala;
 
 class CParquetFileProccess {
  public:
-  char* pfile_ = nullptr;
-  int64_t file_size_ = 0;
-  CParquetFileProccess(char* filename, int64_t file_size) : pfile_(filename),file_size_(file_size) {};
+  CParquetFileProccess(char* filename, int64_t file_size, int64_t threadnum) : pfile_(filename),file_size_(file_size),threadnum_(threadnum) {};
   ~CParquetFileProccess(){};
-
-  Status process() {
-    RETURN_IF_ERROR(CreateTestEnv(64 * 1024, 4L * 1024 * 1024 * 1024));
-cout << "0000000000000." << endl;
-    DescriptorTbl* desc_tbl = nullptr;
-    TDescriptorTableSerialized serialized_thrift_tbl;
-    ObjectPool* obj_pool = runtime_state_->query_state()->obj_pool();
     
-    TDescriptorTable thrift_tbl;
-    CreateDescriptor(&thrift_tbl);
-cout << "111111111111." << endl;
-    RETURN_IF_ERROR(DescriptorTbl::CreateLocal(obj_pool,thrift_tbl,serialized_thrift_tbl,&desc_tbl));
-cout << "222222222222." << endl;
-    ExecNode* node;
-    RETURN_IF_ERROR(CreateNode(&node, desc_tbl));
-cout << "3333333333333." << endl;
-//    ScanRangeParamsPB srppb;
-//    google::protobuf::RepeatedPtrField<ScanRangeParamsPB>& scan_range_params;
-//    node->SetScanRanges(scan_range_params);
-    RETURN_IF_ERROR(node->Prepare(runtime_state_));
-    RETURN_IF_ERROR(node->Open(runtime_state_));
-cout << "444444444444444444." << endl;
-    vector<bool> nullable_tuples(1, false);
-    vector<TTupleId> tuple_id(1, (TTupleId) 1105);
-    RowDescriptor row_desc(*desc_tbl, tuple_id, nullable_tuples);
-cout << "555555555555555555." << endl;
-    MemTracker* tracker = test_env_->exec_env()->process_mem_tracker();
-    RowBatch* row_batch = new RowBatch(&row_desc, 1024, tracker);
-    bool eos; 
-cout << "666666666666666666." << endl;
-    RETURN_IF_ERROR(node->GetNext(runtime_state_, row_batch, &eos));
-cout << "777777777777777777." << endl;
-    node->Close(runtime_state_);
-cout << "888888888888888888." << endl;
+  Status process() {
+    cout << "=========="<< __func__ <<" begin=========="<< endl;
+    RETURN_IF_ERROR(CreateTestEnv(64 * 1024, 4L * 1024 * 1024 * 1024));
+
+    ObjectPool* obj_pool = runtime_state_->query_state()->obj_pool();
+
+    DescriptorTblBuilder builder(obj_pool);
+    TTableDescriptor table_desc;
+    CreateDescriptor(&table_desc);
+    builder.SetTableDescriptor(table_desc);
+    builder.DeclareTuple() << TYPE_BIGINT << TYPE_BIGINT << TYPE_BIGINT << TYPE_BIGINT << TYPE_DOUBLE << TYPE_DOUBLE << TYPE_DOUBLE << TYPE_DOUBLE << TYPE_STRING << TYPE_STRING << TYPE_DATE << TYPE_DATE << TYPE_DATE << TYPE_STRING << TYPE_STRING << TYPE_STRING;
+    DescriptorTbl* desc_tbl = builder.BuildLocal();
+    cout << desc_tbl->DebugString() << endl;
+
+    TPlanNode* tnode = CreateNode();
+
+    QueryState* qs = runtime_state_->query_state();
+    qs->Set_desc_tbl(desc_tbl);
+
+    CreateFragmentState(*tnode);
+
+//    HdfsScanPlanNode* pnode = new HdfsScanPlanNode();
+//    RETURN_IF_ERROR(pnode->Init(*tnode, fragment_state_));
+HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
+
+///////////////////////////
+    HdfsScanNode* pHdfsScanNode = new HdfsScanNode(obj_pool, *pnode, *desc_tbl);
+    RETURN_IF_ERROR(pHdfsScanNode->Prepare(runtime_state_));
+    RETURN_IF_ERROR(pHdfsScanNode->OpenLocal(runtime_state_));
+
+    int64_t len = file_size_;
+    uint8_t data[len];
+    uint8_t* pdata = data;
+    memset(&data, 0x0, len);
+    io::BufferOpts buffer_opts = io::BufferOpts::ReadInto(io::BufferOpts::NO_CACHING, pdata, len);
+
+    ScanRangeMetadata ori_meta_data(0, nullptr);
+    io::ScanRange* pOriRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &ori_meta_data, 0, false, 1105, buffer_opts);
+    ScanRangeMetadata meta_data(0, pOriRange);
+    io::ScanRange* pScanRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &meta_data, 0, false, 1105, buffer_opts);
+
+    vector<FilterContext> filter_ctxs;
+    int64_t scanner_thread_reservation = 131072;
+    Status aa = pHdfsScanNode->ScannerLocal(runtime_state_, filter_ctxs, pScanRange, scanner_thread_reservation);
+    if (!aa.ok()) {
+      if(pHdfsScanNode != nullptr) delete pHdfsScanNode;
+      return Status(Substitute("ScannerLocal error: process Range $0 error", pScanRange->DebugString()));
+    }
+
+    cout << "==========ReadFromLocal begin=========="<< endl;
+    cout <<data<< endl;
+    cout <<scanner_thread_reservation ++ <<endl;
+    cout << "==========ReadFromLocal end=========="<< endl;
+
+    pHdfsScanNode->Close(runtime_state_);
+    cout << "=========="<< __func__ <<" end=========="<< endl;
+    if(pHdfsScanNode != nullptr) delete pHdfsScanNode;
     return Status::OK();
   }
 
  private:
+  char* pfile_ = nullptr;
+  int64_t file_size_ = 0;
+  int64_t threadnum_ = 0;
   unique_ptr<TestEnv> test_env_;
   RuntimeState* runtime_state_ = nullptr;
   FragmentState* fragment_state_ = nullptr;
-  HdfsScanPlanNode* pnode_ = nullptr;
   TExpr texpr_;
 
   Status CreateTestEnv(int64_t min_page_size = 64 * 1024,
       int64_t buffer_bytes_limit = 4L * 1024 * 1024 * 1024) {
+    cout << "=========="<< __func__ <<" begin=========="<< endl;    
     test_env_.reset(new TestEnv());
     test_env_->SetBufferPoolArgs(min_page_size, buffer_bytes_limit);
-    RETURN_IF_ERROR(test_env_->Init());
+    RETURN_IF_ERROR(test_env_->Init(threadnum_));
     TQueryOptions query_options;
     query_options.__set_default_spillable_buffer_size(min_page_size);
     query_options.__set_min_spillable_buffer_size(min_page_size);
     query_options.__set_buffer_pool_limit(buffer_bytes_limit);
+    query_options.__set_parquet_late_materialization_threshold(1105);
+    query_options.__set_parquet_fallback_schema_resolution(TSchemaResolutionStrategy::NAME);
     // Also initializes runtime_state_
     RETURN_IF_ERROR(test_env_->CreateQueryState(1105, &query_options, &runtime_state_));
-
+    cout << "=========="<< __func__ <<" end=========="<< endl;
     return Status::OK();
   }
 
-  Status CreateNode(ExecNode** node, DescriptorTbl* desc_tbl) {
-    QueryState* qs = runtime_state_->query_state();
-    qs->__set_desc_tbl(desc_tbl);
-    //TPlanFragment* fragment = qs->obj_pool()->Add(new TPlanFragment());
-    //PlanFragmentCtxPB* fragment_ctx = qs->obj_pool()->Add(new PlanFragmentCtxPB());
-    //fragment_state_ = qs->obj_pool()->Add(new FragmentState(qs, *fragment, *fragment_ctx));
-  
+  TPlanNode* CreateNode() {
+    cout << "=========="<< __func__ <<" begin=========="<< endl;
+
+    TPlanNode* tnode = new TPlanNode();
+    memset(tnode, 0x0, sizeof(TPlanNode));
+    tnode->__set_node_type(TPlanNodeType::HDFS_SCAN_NODE);
+    tnode->__set_node_id(0);
+    tnode->__set_limit(-1);
+      vector<TTupleId> val;
+      val.push_back((TTupleId) 0);
+    tnode->__set_row_tuples(val);
+      vector<bool> bval;
+      bval.push_back(true);
+    tnode->__set_nullable_tuples(bval);
+      THdfsScanNode thsn;
+      thsn.__set_tuple_id((TTupleId) 0);
+      thsn.__set_use_mt_scan_node(false);
+      thsn.__set_stats_tuple_id((TTupleId) 0);
+      thsn.__set_is_partition_key_scan(true);
+    tnode->__set_hdfs_scan_node(thsn);
+      TBackendResourceProfile trpf;
+      trpf.__set_min_reservation(0);
+      trpf.__set_max_reservation(65536);
+      trpf.__set_spillable_buffer_size(65536);
+      trpf.__set_max_row_buffer_size(65536);
+    tnode->__set_resource_profile(trpf);
+
+    cout << "=========="<< __func__ <<" end=========="<< endl;
+    return tnode;
+  }
+
+  void CreateFragmentState(const TPlanNode tnode) {
+    cout << "=========="<< __func__ <<" begin=========="<< endl;
+
     TPlanFragment tpf;
     tpf.__set_idx((TFragmentIdx) 0);
     tpf.__set_display_name("test");
       TPlan tp;
-        TPlanNode tnode;
-        tnode.__set_node_type(TPlanNodeType::HDFS_SCAN_NODE);
-        tnode.__set_node_id(1105);
-          vector<TTupleId> val;
-          val.push_back((TTupleId) 1105);
-        tnode.__set_row_tuples(val);
-          vector<bool> bval;
-          bval.push_back(true);
-        tnode.__set_nullable_tuples(bval);
-          THdfsScanNode thsn;
-          thsn.__set_tuple_id((TTupleId) 1105);
-          thsn.__set_use_mt_scan_node(false);
-          thsn.__set_stats_tuple_id((TTupleId) 1105);
-        tnode.__set_hdfs_scan_node(thsn);
         vector<TPlanNode> vpn;
         vpn.push_back(tnode);
       tp.__set_nodes(vpn);    
@@ -153,16 +180,16 @@ cout << "888888888888888888." << endl;
       TDataSink tds;
       tds.__set_type(TDataSinkType::TABLE_SINK);
         TDataStreamSink tdss;
-        tdss.__set_dest_node_id((TPlanNodeId) 1105);
+        tdss.__set_dest_node_id((TPlanNodeId) 0);
           TDataPartition tdp;
           tdp.__set_type(TPartitionType::UNPARTITIONED);
             vector<TExpr> vte;
-            vte.push_back(texpr_);
+          //  vte.push_back(texpr_);
           tdp.__set_partition_exprs(vte);
         tdss.__set_output_partition(tdp);
       tds.__set_stream_sink(tdss);
         TTableSink tts;
-        tts.__set_target_table_id((TTableId)1105);
+        tts.__set_target_table_id((TTableId)0);
         tts.__set_type(TTableSinkType::HDFS);
         tts.__set_action(TSinkAction::INSERT);
           THdfsTableSink hts;
@@ -179,13 +206,13 @@ cout << "888888888888888888." << endl;
           hts.__set_external_output_dir("/dev/null");
           hts.__set_external_output_partition_depth(1105);
             map<string, int64_t> str11222;
-            str11222.insert(make_pair("test",1105));
+            str11222.insert(make_pair("test",0));
           hts.__set_parquet_bloom_filter_col_info(str11222);
         tts.__set_hdfs_table_sink(hts);
 //        tts.__set_kudu_table_sink(const TKuduTableSink& val);      
       tds.__set_table_sink(tts);
         TJoinBuildSink Tjbs;
-        Tjbs.__set_dest_node_id((TPlanNodeId) 1105);
+        Tjbs.__set_dest_node_id((TPlanNodeId) 0);
         Tjbs.__set_join_op(TJoinOp::INNER_JOIN);
           TEqJoinCondition tejc;
           tejc.__set_left(texpr_);
@@ -198,7 +225,7 @@ cout << "888888888888888888." << endl;
           trfd.__set_filter_id(1105);
           trfd.__set_src_expr(texpr_);
             TRuntimeFilterTargetDesc trftd;
-            trftd.__set_node_id((TPlanNodeId) 1105);
+            trftd.__set_node_id((TPlanNodeId) 0);
             trftd.__set_target_expr(texpr_);
             trftd.__set_is_bound_by_partition_columns(false);
             trftd.__set_target_expr_slotids(vector<TSlotId>(1,(TSlotId)1105));
@@ -216,7 +243,7 @@ cout << "888888888888888888." << endl;
             vrftd.push_back(trftd);
           trfd.__set_targets(vrftd);
             map< TPlanNodeId, int32_t> mal111;
-            mal111.insert(make_pair((TPlanNodeId)1105,1105));
+            mal111.insert(make_pair((TPlanNodeId)1105,0));
           trfd.__set_planid_to_target_ndx(mal111);
           trfd.__set_is_broadcast_join(false);
           trfd.__set_has_local_targets(false);
@@ -226,7 +253,7 @@ cout << "888888888888888888." << endl;
           trfd.__set_type(TRuntimeFilterType::BLOOM);
           trfd.__set_compareOp(extdatasource::TComparisonOp::NE);
           trfd.__set_filter_size_bytes(1105);
-          trfd.__set_src_node_id((TPlanNodeId) 1105);
+          trfd.__set_src_node_id((TPlanNodeId) 0);
           vector<TRuntimeFilterDesc> vrfd;
           vrfd.push_back(trfd);
         Tjbs.__set_runtime_filters(vrfd);
@@ -262,23 +289,27 @@ cout << "888888888888888888." << endl;
     vector<TPlanFragment> vpf;
     vpf.push_back(tpf);
 
+//    PlanFragmentCtxPB fragment_ctx;
+//    QueryState* qs = runtime_state_->query_state();
+//    fragment_state_ = new FragmentState(qs, tpf, fragment_ctx);
+
     TPlanFragmentInstanceCtx tpfic;
     tpfic.__set_fragment_idx((TFragmentIdx) 0);
       TUniqueId tuid;
-      tuid.__set_hi(1105);
-      tuid.__set_lo(1105);
+      tuid.__set_hi(0);
+      tuid.__set_lo(0);
     tpfic.__set_fragment_instance_id(tuid);
     tpfic.__set_per_fragment_instance_idx(1105);
     tpfic.__set_per_exch_num_senders(mal111);
     tpfic.__set_sender_id(1105);
       TDebugOptions tdoption;
-      tdoption.__set_node_id((TPlanNodeId) 1105);
+      tdoption.__set_node_id((TPlanNodeId) 0);
       tdoption.__set_phase(TExecNodePhase::GETNEXT);
       tdoption.__set_action(TDebugAction::DELAY);
       tdoption.__set_action_param("test");
     tpfic.__set_debug_options(tdoption);
       TRuntimeFilterSource trfs;
-      trfs.__set_src_node_id((TPlanNodeId) 1105);
+      trfs.__set_src_node_id((TPlanNodeId) 0);
       trfs.__set_filter_id(1105);
       vector<TRuntimeFilterSource> vrfs;
       vrfs.push_back(trfs);
@@ -292,168 +323,45 @@ cout << "888888888888888888." << endl;
     fragment_info.__set_fragments(vpf);
     fragment_info.__set_fragment_instance_ctxs(vpfic);
 
-    RETURN_IF_ERROR(qs->CreateFragmentStateMapLocal(&fragment_info));
-  
-    pnode_ = new HdfsScanPlanNode();
+    ExecQueryFInstancesRequestPB request;
+    PlanFragmentInstanceCtxPB* instance_ctx_pb = request.add_fragment_instance_ctxs();
+      ::google::protobuf::Map< ::google::protobuf::int32, ::impala::ScanRangesPB > srmap;
+        ScanRangesPB srspb;
+        ::impala::ScanRangeParamsPB* insSrPB = srspb.add_scan_ranges();
+          ScanRangePB srpb;
+            HdfsFileSplitPB hdfs_file_split;
+            hdfs_file_split.set_partition_id(0);
+            hdfs_file_split.set_file_length(file_size_);
+            //hdfs_file_split.set_relative_path(pfile_);
+            hdfs_file_split.set_mtime(1105);
+            //hdfs_file_split.set_file_compression();
+            hdfs_file_split.set_offset(0);
+            hdfs_file_split.set_length(file_size_);
+          *srpb.mutable_hdfs_file_split() = hdfs_file_split;
+        *insSrPB->mutable_scan_range() = srpb;
+      srmap.insert({0, srspb});
+    *instance_ctx_pb->mutable_per_node_scan_ranges() = srmap;
+    PlanFragmentCtxPB* fragment_ctxs = request.add_fragment_ctxs();
+    fragment_ctxs->set_fragment_idx(0);
+    request.set_initial_mem_reservation_total_claims(0);
 
+    QueryState* qs = runtime_state_->query_state();
+    Status bb = qs->CreateFragmentStateMapLocal(&fragment_info, &request);
+    if(!bb.ok()){
+      cout << "CreateFragmentStateMapLocal error"<<endl; 
+    }
     fragment_state_ = qs->findFragmentState((TFragmentIdx) 0);
 
-    RETURN_IF_ERROR(pnode_->Init(tnode, fragment_state_));
-    RETURN_IF_ERROR(pnode_->CreateExecNode(runtime_state_, node));
-
-    return Status::OK();
+    cout << "=========="<< __func__ <<" end=========="<< endl;
   }
 
-  void CreateDescriptor(TDescriptorTable *thrift_tbl) {
-    // create DescriptorTbl
-    TSlotDescriptor tslot;
-    tslot.__set_id((TSlotId) 1105);
-    tslot.__set_parent((TTupleId) 1105);
-    tslot.__set_itemTupleId((TTupleId) 1105);
-      vector<TTypeNode> vtn;
-      TTypeNode tn;
-      tn.__set_type(TTypeNodeType::ARRAY);
-        TScalarType st;
-        st.__set_type(TPrimitiveType::BIGINT);
-        st.__set_len(1105);
-        st.__set_precision(1105);
-        st.__set_scale(1105);
-      tn.__set_scalar_type(st);
-      tn.__isset.scalar_type = false;
-        vector<TStructField> vsf;
-        TStructField tsf;
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_orderkey");
-        tsf.__set_comment("l_orderkey");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-/*        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_partkey");
-        tsf.__set_comment("l_partkey");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_suppkey");
-        tsf.__set_comment("l_suppkey");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_linenumber");
-        tsf.__set_comment("l_linenumber");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_quantity");
-        tsf.__set_comment("l_quantity");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_extendedprice");
-        tsf.__set_comment("l_extendedprice");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_discount");
-        tsf.__set_comment("l_discount");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_tax");
-        tsf.__set_comment("l_tax");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_returnflag");
-        tsf.__set_comment("l_returnflag");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_linestatus");
-        tsf.__set_comment("l_linestatus");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_shipdate");
-        tsf.__set_comment("l_shipdate");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_commitdate");
-        tsf.__set_comment("l_commitdate");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_receiptdate");
-        tsf.__set_comment("l_receiptdate");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_shipinstruct");
-        tsf.__set_comment("l_shipinstruct");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_shipmode");
-        tsf.__set_comment("l_shipmode");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_comment");
-        tsf.__set_comment("l_comment");
-        tsf.__set_field_id(32);
-        vsf.push_back(tsf);*/
-      tn.__set_struct_fields(vsf);
-      vtn.push_back(tn);
-      memset(&tn, 0x0, sizeof(TTypeNode));
-      tn.__set_type(TTypeNodeType::ARRAY);
-        TScalarType st2;
-        st2.__set_type(TPrimitiveType::BIGINT);
-        st2.__set_len(1105);
-        st2.__set_precision(1105);
-        st2.__set_scale(1105);
-      tn.__set_scalar_type(st2);
-      tn.__isset.scalar_type = false;
-        memset(&tsf,0x0,sizeof(TStructField));
-        tsf.__set_name("l_suppkey");
-        tsf.__set_comment("l_suppkey");
-        tsf.__set_field_id(32);
-        vector<TStructField> vsf2;
-        vsf2.push_back(tsf);
-      tn.__set_struct_fields(vsf2);
-      vtn.push_back(tn);
-      TColumnType tcype;
-      tcype.__set_types(vtn);
-    tslot.__set_slotType(tcype);
-    tslot.__set_materializedPath(vector<int32_t>(1,1105));
-    tslot.__set_byteOffset(0);
-    tslot.__set_nullIndicatorByte(0);
-    tslot.__set_nullIndicatorBit(-1);
-    tslot.__set_slotIdx(0);
-    vector<TSlotDescriptor>  slot;
-    slot.push_back(tslot);
-    thrift_tbl->__set_slotDescriptors(slot);
+  void CreateDescriptor(TTableDescriptor *ttable) {
+    cout << "=========="<< __func__ <<" begin=========="<< endl;
 
-    TTupleDescriptor ttuple;
-    ttuple.__set_id((TTupleId) 1105);
-    ttuple.__set_byteSize(32);
-    ttuple.__set_numNullBytes(0);
-    ttuple.__set_tableId((TTableId) 1105);
-    ttuple.__set_tuplePath(vector<int32_t>(1,1105));
-    vector<TTupleDescriptor>  vtuple;
-    vtuple.push_back(ttuple);
-    thrift_tbl->__set_tupleDescriptors(vtuple);
-
-    TTableDescriptor ttable;
-    ttable.__set_id((TTableId) 1105);
-    ttable.__set_tableType(TTableType::HDFS_TABLE);
-      vector<TColumnDescriptor> vtcc;
-      TColumnDescriptor tcc;
-      memset(&tcc, 0x0, sizeof(TColumnDescriptor));
-      tcc.__set_name("l_orderkey");
-      tcc.__set_type(tcype);
-      vtcc.push_back(tcc);
-    ttable.__set_columnDescriptors(vtcc);
-    ttable.__set_numClusteringCols(32);
+    ttable->__set_id((TTableId) 0);
+    ttable->__set_tableType(TTableType::HDFS_TABLE);
+    ttable->__set_numClusteringCols(0);
+////////////////
       THdfsTable tht;
       tht.__set_hdfsBaseDir(pfile_);
         vector<string> vcn;
@@ -480,7 +388,7 @@ cout << "888888888888888888." << endl;
           TExpr te;
             TExprNode ten;
             ten.__set_node_type(TExprNodeType::NULL_LITERAL);
-            ten.__set_type(tcype);
+//            ten.__set_type(tcype1);
             ten.__set_num_children(0);
             ten.__set_is_constant(false);
               TFunction tt2;
@@ -489,8 +397,8 @@ cout << "888888888888888888." << endl;
                 tfn1.__set_function_name("find1105");
               tt2.__set_name(tfn1);
               tt2.__set_binary_type(TFunctionBinaryType::NATIVE);
-              tt2.__set_arg_types(vector<TColumnType>(1,tcype));
-              tt2.__set_ret_type(tcype);
+//              tt2.__set_arg_types(vector<TColumnType>(1,tcype1));
+//              tt2.__set_ret_type(tcype1);
               tt2.__set_has_var_args(false);
               tt2.__set_comment("test function");
               tt2.__set_signature("test function");
@@ -501,7 +409,7 @@ cout << "888888888888888888." << endl;
                 tsfunc.__set_close_fn_symbol("tsf close");
               tt2.__set_scalar_fn(tsfunc);
                 TAggregateFunction taf;
-                taf.__set_intermediate_type(tcype);
+//                taf.__set_intermediate_type(tcype1);
                 taf.__set_is_analytic_only_fn(false);
                 taf.__set_update_fn_symbol("taf");
                 taf.__set_init_fn_symbol("taf");
@@ -557,7 +465,7 @@ cout << "888888888888888888." << endl;
             ten.__set_decimal_literal(tdliter);
               TAggregateExpr taexpr;
               taexpr.__set_is_merge_agg(false);
-              taexpr.__set_arg_types(vector<TColumnType>(1,tcype));
+//              taexpr.__set_arg_types(vector<TColumnType>(1,tcype1));
             ten.__set_agg_expr(taexpr);
               TTimestampLiteral ttimelit;
               ttimelit.__set_value("20220126");
@@ -578,12 +486,12 @@ cout << "888888888888888888." << endl;
           memset(&texpr_, 0x0, sizeof(TExpr));
           memcpy(&texpr_, &te, sizeof(TExpr));
 
-        thp.__set_partitionKeyExprs(vte);
+//        thp.__set_partitionKeyExprs(vte);
           THdfsPartitionLocation tpl;
           tpl.__set_prefix_index(-1);
           tpl.__set_suffix(pfile_);
         thp.__set_location(tpl);
-        thp.__set_id(1105);
+        thp.__set_id(0);
         thp.__set_prev_id(1105);
           THdfsFileDesc hfd;
           hfd.__set_file_desc_data(pfile_);
@@ -593,9 +501,9 @@ cout << "888888888888888888." << endl;
         thp.__set_insert_file_desc(vhfd);
         thp.__set_delete_file_desc(vhfd);
         thp.__set_access_level(TAccessLevel::READ_WRITE);
-        TTableStats ts;
-        ts.__set_num_rows(file_size_);
-        ts.__set_total_file_bytes(file_size_);
+          TTableStats ts;
+          ts.__set_num_rows(file_size_);
+          ts.__set_total_file_bytes(file_size_);
         thp.__set_stats(ts);
         thp.__set_is_marked_cached(false);
         map<string, string> str11;
@@ -607,8 +515,8 @@ cout << "888888888888888888." << endl;
         thp.__set_has_incremental_stats(false);
         thp.__set_write_id(1105);
         thp.__set_db_name("test");
-        thp.__set_tbl_name("testtable");
-        thp.__set_partition_name("testtablepat");
+        thp.__set_tbl_name("lineitem");
+        thp.__set_partition_name("lineitem");
           THdfsStorageDescriptor thsd;
           thsd.__set_lineDelim(1);
           thsd.__set_fieldDelim(1);
@@ -617,10 +525,11 @@ cout << "888888888888888888." << endl;
           thsd.__set_escapeChar(1);
           thsd.__set_quoteChar(1);
           thsd.__set_fileFormat(THdfsFileFormat::PARQUET);
-          thsd.__set_blockSize(32);
+          thsd.__set_blockSize(file_size_);
         thp.__set_hdfs_storage_descriptor(thsd);
         map<int64_t, THdfsPartition> thpamp;
-        thpamp.insert(make_pair(1105, thp));
+        thpamp.insert(make_pair(0, thp));
+
       tht.__set_partitions(thpamp);
       tht.__set_has_full_partitions(false);
       tht.__set_has_partition_names("l_orderkey");
@@ -633,7 +542,7 @@ cout << "888888888888888888." << endl;
         TSqlConstraints tscon;
           Apache::Hadoop::Hive::SQLPrimaryKey spk;
           spk.__set_table_db("test");
-          spk.__set_table_name("testtable");
+          spk.__set_table_name("lineitem");
           spk.__set_column_name("testclo");
           spk.__set_key_seq(1105);
           spk.__set_pk_name("spk");
@@ -667,19 +576,19 @@ cout << "888888888888888888." << endl;
         tvwlist.__set_invalid_write_ids(vector<int64_t>(1,1105));
         tvwlist.__set_aborted_indexes(vector<int32_t>(1,1105));
       tht.__set_valid_write_ids(tvwlist);
-    ttable.__set_hdfsTable(tht);
-    ttable.__set_tableName("testtable");
-    ttable.__set_dbName("test");
-    vector<TTableDescriptor>  vtable;
-    vtable.push_back(ttable);
-    thrift_tbl->__set_tableDescriptors(vtable);
+    ttable->__set_hdfsTable(tht);
+
+    ttable->__set_tableName("lineitem");
+    ttable->__set_dbName("test");
+
+    cout << "=========="<< __func__ <<" end=========="<< endl;
   }
 };
 
 int main(int argc, char* argv[]){
     impala::InitCommonRuntime(argc, argv, false, impala::TestInfo::BE_TEST);
 
-    if (argc < 2) {
+    if (argc <= 2) {
         cout << "Must specify input file." << endl;
         return -1;
     } 
@@ -689,13 +598,14 @@ int main(int argc, char* argv[]){
 
     fseek(file, 0L, SEEK_END);
     size_t file_len = ftell(file);
-    cerr << "file_len ="<< file_len << endl;
+    cout << "file_len ="<< file_len << endl;
+    int tnum = atoi(argv[2]);
 
-    CParquetFileProccess aa(argv[1],file_len);
+    CParquetFileProccess aa(argv[1],file_len,tnum);
 
     Status ss = aa.process();
     if (!ss.ok()) {
-      cerr << "process error["<< ss.GetDetail() <<"]"<< endl;
+      cout << "process error["<< ss.GetDetail() <<"]"<< endl;
       return -1;
     }
 
