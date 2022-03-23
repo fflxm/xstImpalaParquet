@@ -182,12 +182,9 @@ class QueryState {
     return *desc_tbl_;
   }
 
-  //modify by ff
-  void __set_desc_tbl(DescriptorTbl* desc_tbl) {
+  void Set_desc_tbl(DescriptorTbl* desc_tbl) {
     desc_tbl_ = desc_tbl;
   }
-  //modify by ff
-  Status CreateFragmentStateMapLocal(const TExecPlanFragmentInfo* fragment_info, const ExecQueryFInstancesRequestPB* request);
 
   /// Sets up state required for fragment execution: memory reservations, etc. Fails if
   /// resources could not be acquired. Acquires a backend resource refcount and returns
@@ -218,6 +215,9 @@ class QueryState {
   /// Returns an error if fragment preparation failed.
   Status GetFInstanceState(
       const TUniqueId& instance_id, FragmentInstanceState** fi_state);
+
+//modify by ff
+  Status CreateFragmentStateMapLocal(TExecPlanFragmentInfo* fragment_info, ExecQueryFInstancesRequestPB* request);
 
   /// Blocks until all fragment instances have finished their Prepare phase.
   void PublishFilter(const PublishFilterParamsPB& params, kudu::rpc::RpcContext* context);
