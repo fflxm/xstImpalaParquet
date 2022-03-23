@@ -42,8 +42,6 @@
 #include "util/disk-info.h"
 #include "util/runtime-profile-counters.h"
 
-#include "parquet/hdfs-parquet-scanner.h"
-
 #include "common/names.h"
 
 DEFINE_int32(max_row_batches, 0,
@@ -171,6 +169,15 @@ Status HdfsScanNode::Open(RuntimeState* state) {
 
   thread_avail_cb_id_ = runtime_state_->resource_pool()->AddThreadAvailableCb(
       bind<void>(mem_fn(&HdfsScanNode::ThreadTokenAvailableCb), this, _1));
+  return Status::OK();
+}
+//modify by ff 
+Status HdfsScanNode::OpenLocal(RuntimeState* state) {
+  SCOPED_TIMER(runtime_profile_->total_time_counter());
+  ScopedOpenEventAdder ea(this);
+  RETURN_IF_ERROR(HdfsScanNodeBase::Open(state));
+  thread_state_.Open(this, FLAGS_max_row_batches);
+
   return Status::OK();
 }
 
@@ -465,6 +472,54 @@ void HdfsScanNode::ScannerThread(bool first_thread, int64_t scanner_thread_reser
   thread_state_.DecrementNumActive();
 }
 
+//modify by ff
+Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> filter_ctxs, io::ScanRange* pScanRange, int64_t scanner_thread_reservation) {
+  MemPool expr_results_pool(expr_mem_tracker());
+
+  bool needs_buffers;
+  RETURN_IF_ERROR(reader_context_->StartScanRange(pScanRange, &needs_buffers)) ;
+  
+  {
+    // Prevent memory accumulating across scan ranges.
+    expr_results_pool.Clear();
+
+    // Take a snapshot of remaining_scan_range_submissions before calling
+    // StartNextScanRange().  We don't want it to go to zero between the return from
+    // StartNextScanRange() and the check for when all ranges are complete.
+    int remaining_scan_range_submissions = shared_state_->RemainingScanRangeSubmissions();
+    ScanRange* scan_range = pScanRange;
+
+    if (scan_range != nullptr) {
+      // Got a scan range. Process the range end to end (in this thread).
+      ProcessSplit(filter_ctxs, &expr_results_pool, scan_range, &scanner_thread_reservation);
+    }
+
+    // Done with range and it completed successfully
+    if (shared_state_->progress().done()) {
+      // All ranges are finished.  Indicate we are done.
+      SetDone();
+    }
+
+    if (scan_range == nullptr && remaining_scan_range_submissions == 0) {
+      unique_lock<timed_mutex> l(lock_);
+      // All ranges have been queued and DiskIoMgr has no more new ranges for this scan
+      // node to process. This means that every range is either done or being processed by
+      // another thread.
+      all_ranges_started_ = true;
+    }
+  }
+
+  {
+    unique_lock<timed_mutex> l(lock_);
+    ReturnReservationFromScannerThread(l, scanner_thread_reservation);
+  }
+  for (auto& ctx: filter_ctxs) ctx.expr_eval->Close(runtime_state_);
+  //runtime_state_->resource_pool()->ReleaseThreadToken(true);
+  expr_results_pool.FreeAll();
+
+  return Status::OK();
+}
+
 void HdfsScanNode::ProcessSplit(const vector<FilterContext>& filter_ctxs,
     MemPool* expr_results_pool, ScanRange* scan_range,
     int64_t* scanner_thread_reservation) {
@@ -529,23 +584,6 @@ void HdfsScanNode::ProcessSplit(const vector<FilterContext>& filter_ctxs,
   // Reservation may have been increased by the scanner, e.g. Parquet may allocate
   // additional reservation to scan columns.
   *scanner_thread_reservation = context.total_reservation();
-}
-//modify by ff
-Status HdfsScanNode::ScannerLocal(ScanRange* scan_range, int64_t* scanner_thread_reservation) {
-  MemPool filter_mem_pool(expr_mem_tracker());
-  MemPool expr_results_pool(expr_mem_tracker());
-  vector<FilterContext> filter_ctxs;
-  Status filter_status = Status::OK();
-  for (auto& filter_ctx: filter_ctxs_) {
-    FilterContext filter;
-    filter_status = filter.CloneFrom(filter_ctx, pool_, runtime_state_, &filter_mem_pool,
-        &expr_results_pool);
-    if (!filter_status.ok()) break;
-    filter_ctxs.push_back(filter);
-  }
-
-  ProcessSplit(filter_ctxs,&expr_results_pool,scan_range,scanner_thread_reservation);
-  return Status::OK();
 }
 
 void HdfsScanNode::SetDoneInternal(const Status& status) {
