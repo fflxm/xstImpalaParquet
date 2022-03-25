@@ -3,6 +3,7 @@
 #include <sstream>
 #include <vector>
 #include <gflags/gflags.h>
+#include <sys/time.h>
 
 #include "gen-cpp/parquet_types.h"
 #include "gen-cpp/Types_types.h"
@@ -89,13 +90,25 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
     ScanRangeMetadata meta_data(0, pOriRange);
     io::ScanRange* pScanRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &meta_data, 0, false, 1105, buffer_opts);
 
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    cout<< "begin time:tv_sec[" << tv.tv_sec <<"]tv_usec[" << tv.tv_usec <<"]" << endl;
+
     vector<FilterContext> filter_ctxs;
-    int64_t scanner_thread_reservation = 131072;
+//    int64_t scanner_thread_reservation = 131072;
+    int64_t scanner_thread_reservation = 17621789490;
     Status aa = pHdfsScanNode->ScannerLocal(runtime_state_, filter_ctxs, pScanRange, scanner_thread_reservation);
     if (!aa.ok()) {
       if(pHdfsScanNode != nullptr) delete pHdfsScanNode;
       return Status(Substitute("ScannerLocal error: process Range $0 error", pScanRange->DebugString()));
     }
+
+    struct timeval tvend;
+    gettimeofday(&tvend,NULL);
+    cout<< "end time:tv_sec[" << tvend.tv_sec <<"]tv_usec[" << tvend.tv_usec <<"]" << endl;
+
+    float timeused = (tvend.tv_sec- tv.tv_sec)*1000000+(tvend.tv_usec-tv.tv_usec);
+    cout<< "used:" << timeused << endl;
 
     cout << "==========ReadFromLocal begin=========="<< endl;
     cout <<data<< endl;
@@ -586,7 +599,7 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
 };
 
 int main(int argc, char* argv[]){
-    impala::InitCommonRuntime(argc, argv, false, impala::TestInfo::BE_TEST);
+    //impala::InitCommonRuntime(argc, argv, false, impala::TestInfo::BE_TEST);
 
     if (argc <= 2) {
         cout << "Must specify input file." << endl;
