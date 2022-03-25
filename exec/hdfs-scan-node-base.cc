@@ -909,7 +909,21 @@ void HdfsScanNodeBase::InitNullCollectionValues(RowBatch* row_batch) const {
   DCHECK_EQ(row_batch->row_desc()->tuple_descriptors().size(), 1);
   const TupleDescriptor& tuple_desc =
       *row_batch->row_desc()->tuple_descriptors()[0];
+
+//modify by ff
+  for (int i = 0; i < row_batch->num_rows(); ++i) {
+    Tuple* tuple = row_batch->GetRow(i)->GetTuple(0);
+    DCHECK(tuple != NULL);
+      for (int j =0; j< tuple_desc.slots().size(); j++)
+      {
+        int slot_offset = tuple_desc.slots()[j]->tuple_offset();
+        cout << tuple->GetIntSlot(slot_offset) ;
+      }
+      cout << endl;
+  }
+
   if (tuple_desc.collection_slots().empty()) return;
+
   for (int i = 0; i < row_batch->num_rows(); ++i) {
     Tuple* tuple = row_batch->GetRow(i)->GetTuple(0);
     DCHECK(tuple != NULL);
