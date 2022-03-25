@@ -77,7 +77,7 @@ DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
   vector<TSlotDescriptor>  slot;
   vector<TColumnDescriptor> vtcc;
   TColumnDescriptor tcc;
-
+int j =0;
 //  TBuildTestDescriptorTableParams params;
   for (int i = 0; i < tuples_descs_.size(); ++i) {
 //    params.slot_types.push_back(vector<TColumnType>());
@@ -91,7 +91,25 @@ DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
       tslot.__set_parent((TTupleId) 0);
 //      tslot.__set_itemTupleId((TTupleId) 110501);
       tslot.__set_slotType(slot_type.ToThrift());
-      tslot.__set_materializedPath(vector<int32_t>(1,i));
+      tslot.__set_materializedPath(vector<int32_t>(1,j));
+      if(j==0) tslot.__set_byteOffset(4);
+      if(j==1) tslot.__set_byteOffset(147);
+      if(j==2) tslot.__set_byteOffset(404);
+      if(j==3) tslot.__set_byteOffset(638);
+      if(j==4) tslot.__set_byteOffset(768);
+      if(j==5) tslot.__set_byteOffset(983);
+      if(j==6) tslot.__set_byteOffset(1289);
+      if(j==7) tslot.__set_byteOffset(1457);
+      if(j==8) tslot.__set_byteOffset(1610);
+      if(j==9) tslot.__set_byteOffset(1685);
+      if(j==10) tslot.__set_byteOffset(1751);
+      if(j==11) tslot.__set_byteOffset(1936);
+      if(j==12) tslot.__set_byteOffset(2120);
+      if(j==13) tslot.__set_byteOffset(2294);
+      if(j==14) tslot.__set_byteOffset(2446);
+      if(j==15) tslot.__set_byteOffset(2569);
+      j++;
+
       slot.push_back(tslot);
 
       memset(&tcc, 0x0, sizeof(TColumnDescriptor));
