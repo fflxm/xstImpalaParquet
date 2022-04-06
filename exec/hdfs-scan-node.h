@@ -77,7 +77,7 @@ class HdfsScanNode : public HdfsScanNodeBase {
   virtual Status Prepare(RuntimeState* state) override WARN_UNUSED_RESULT;
   virtual Status Open(RuntimeState* state) override WARN_UNUSED_RESULT;
 // modify by ff
-  Status OpenLocal(RuntimeState* state);
+  Status OpenLocal(RuntimeState* state, const char* pfile, const int64_t filesize);
   Status ScannerLocal(RuntimeState* state, vector<FilterContext> filter_ctxs, io::ScanRange* pScanRange, int64_t scanner_thread_reservation);
 
   virtual Status GetNext(RuntimeState* state, RowBatch* row_batch, bool* eos) override
@@ -94,6 +94,10 @@ class HdfsScanNode : public HdfsScanNodeBase {
   virtual Status AddDiskIoRanges(const std::vector<io::ScanRange*>& ranges,
       EnqueueLocation enqueue_location = EnqueueLocation::TAIL)
       override WARN_UNUSED_RESULT;
+
+//modiby by ff :add "bool blocal"
+  virtual Status AddDiskIoRangesLocal(const std::vector<io::ScanRange*>& ranges,
+      EnqueueLocation enqueue_location = EnqueueLocation::TAIL);
 
   /// Adds a materialized row batch for the scan node.  This is called from scanner
   /// threads. This function will block if the row batch queue is full.

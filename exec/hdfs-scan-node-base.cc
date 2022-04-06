@@ -193,7 +193,6 @@ Status HdfsScanPlanNode::Init(const TPlanNode& tnode, FragmentState* state) {
   for (int i = 0; i < materialized_slots_.size(); ++i) {
     path_to_materialized_slot_idx_[materialized_slots_[i]->col_path()] = i;
   }
-
   // Initialize is_materialized_col_
   is_materialized_col_.resize(hdfs_table_->num_cols());
   for (int i = 0; i < hdfs_table_->num_cols(); ++i) {
@@ -458,7 +457,7 @@ Status HdfsScanNodeBase::Prepare(RuntimeState* state) {
   // Check if reservation was enough to allocate at least one buffer. The
   // reservation calculation in HdfsScanNode.java should guarantee this.
   // Hitting this error indicates a misconfiguration or bug.
-/*modify by ff
+/*
   int64_t min_buffer_size = ExecEnv::GetInstance()->disk_io_mgr()->min_buffer_size();
   if (scan_range_params_->size() > 0
       && resource_profile_.min_reservation < min_buffer_size) {
@@ -466,11 +465,11 @@ Status HdfsScanNodeBase::Prepare(RuntimeState* state) {
       Substitute("HDFS scan min reservation $0 must be >= min buffer size $1",
        resource_profile_.min_reservation, min_buffer_size));
   }
-*/
+
   // One-time initialization of state that is constant across scan ranges
   scan_node_pool_.reset(new MemPool(mem_tracker()));
   runtime_profile()->AddInfoString("Table Name", hdfs_table_->fully_qualified_name());
-/*modify by ff
+
   if (HasRowBatchQueue()) {
     // Add per volume stats to the runtime profile for Non MT scan node.
     PerVolumeStats per_volume_stats;
@@ -478,7 +477,8 @@ Status HdfsScanNodeBase::Prepare(RuntimeState* state) {
     UpdateHdfsSplitStats(*scan_range_params_, &per_volume_stats);
     PrintHdfsSplitStats(per_volume_stats, &str);
     runtime_profile()->AddInfoString(HDFS_SPLIT_STATS_DESC, str.str());
-  }*/
+  }
+*/
   return Status::OK();
 }
 
@@ -911,16 +911,39 @@ void HdfsScanNodeBase::InitNullCollectionValues(RowBatch* row_batch) const {
       *row_batch->row_desc()->tuple_descriptors()[0];
 
 //modify by ff
-  for (int i = 0; i < row_batch->num_rows(); ++i) {
-    Tuple* tuple = row_batch->GetRow(i)->GetTuple(0);
-    DCHECK(tuple != NULL);
-      for (int j =0; j< tuple_desc.slots().size(); j++)
-      {
-        int slot_offset = tuple_desc.slots()[j]->tuple_offset();
-        cout << tuple->GetIntSlot(slot_offset) ;
+    for (int i = 0; i < row_batch->num_rows(); ++i) {
+      vector<TupleDescriptor*>::const_iterator desc = row_batch->row_desc()->tuple_descriptors().begin();
+      for (int j = 0; desc != row_batch->row_desc()->tuple_descriptors().end(); ++desc, ++j) {
+        Tuple* tuple = row_batch->GetRow(i)->GetTuple(j);
+        if (tuple == NULL) {
+          std::cout<<"tuple is null";
+          continue;
+        }
+
+        vector<SlotDescriptor*>::const_iterator slot = (*desc)->slots().begin();
+        for (; slot != (*desc)->slots().end(); ++slot) {
+          if((*slot)->type().IsVarLenStringType()){
+            StringValue* string_v = tuple->GetStringSlot((*slot)->tuple_offset());
+            std::cout << "string value="<< string_v->ptr<<";";
+          }
+          if((*slot)->type().IsIntegerType()){
+            int64_t* int64_v = tuple->GetBigIntSlot((*slot)->tuple_offset());
+            std::cout << "int value="<< *int64_v<<";";
+          }          
+          if((*slot)->type().IsFloatingPointType()){
+            void* double_v = tuple->GetSlot((*slot)->tuple_offset());
+            double aa = 0.0;
+            memcpy(&aa, double_v, 8);
+            std::cout << "double value="<< aa <<";";
+          }
+          if((*slot)->type().IsDateType()){
+            int32_t* int32_v = tuple->GetIntSlot((*slot)->tuple_offset());
+            std::cout << "date value="<< int32_v<<";";
+          }
+        }
+        std::cout << endl;
       }
-      cout << endl;
-  }
+    }
 
   if (tuple_desc.collection_slots().empty()) return;
 

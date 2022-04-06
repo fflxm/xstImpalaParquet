@@ -41,7 +41,9 @@
 #include "util/spinlock.h"
 #include "util/unique-id-hash.h"
 
-#include "gen-cpp/parquet_types.h"
+namespace org { namespace apache { namespace impala { namespace fb {
+struct FbFileMetadata;
+}}}}
 
 namespace impala {
 
@@ -84,6 +86,9 @@ struct HdfsFileDesc {
 
   /// Splits (i.e. raw byte ranges) for this file, assigned to this scan node.
   std::vector<io::ScanRange*> splits;
+
+  /// Extra file metadata, e.g. Iceberg-related file-level info.
+  const ::org::apache::impala::fb::FbFileMetadata* file_metadata;
 
   /// Some useful typedefs for creating HdfsFileDesc related data structures.
   /// This is a pair for partition ID and filename which uniquely identifies a file.
@@ -130,8 +135,6 @@ class ScanRangeSharedState {
   /// Given a partition_id and filename returns the related file descriptor DCHECK ensures
   /// there is always file descriptor returned.
   const HdfsFileDesc* GetFileDesc(int64_t partition_id, const std::string& filename);
-//modify by ff
-  void SetFileDesc(int64_t partition_id, const std::string& filename, HdfsFileDesc* filesdesc);
 
   /// Sets the scanner specific metadata for 'partition_id' and 'filename'.
   /// Scanners can use this to store file header information. Thread safe.
@@ -189,6 +192,7 @@ class ScanRangeSharedState {
 
  private:
   friend class HdfsScanPlanNode;
+  friend class HdfsScanNode;
 
   ScanRangeSharedState() = default;
   DISALLOW_COPY_AND_ASSIGN(ScanRangeSharedState);
@@ -333,9 +337,6 @@ class HdfsScanPlanNode : public ScanPlanNode {
   /// Processes all the scan range params for this scan node to create all the required
   /// file descriptors, update metrics and fill in all relevant state in 'shared_state_'.
   Status ProcessScanRangesAndInitSharedState(FragmentState* state);
-//modify by ff
-  Status ProcessLocalFileAndInitSharedState(FragmentState* state);
-
   /// Per scanner type codegen'd fn.
   /// The actual types of the functions differ so we use void* as the common type and
   /// reinterpret cast before calling the functions.
@@ -514,6 +515,9 @@ class HdfsScanNodeBase : public ScanNode {
   /// scan ranges are added to the head or tail of the queue. Implemented by child classes
   /// to add ranges to their implementation of a queue that is used to organize ranges.
   virtual Status AddDiskIoRanges(const std::vector<io::ScanRange*>& ranges,
+      EnqueueLocation enqueue_location = EnqueueLocation::TAIL) = 0;
+//modify by ff
+  virtual Status AddDiskIoRangesLocal(const std::vector<io::ScanRange*>& ranges,
       EnqueueLocation enqueue_location = EnqueueLocation::TAIL) = 0;
 
   /// Adds all splits for file_desc to be read later by scanners.
@@ -803,10 +807,6 @@ class HdfsScanNodeBase : public ScanNode {
   Status StartNextScanRange(const std::vector<FilterContext>& filter_ctxs,
       int64_t* reservation, io::ScanRange** scan_range);
 
-//modify by ff
-Status StartScanRange(const std::vector<FilterContext>& filter_ctxs,
-    int64_t* reservation, io::ScanRange** scan_range);
-
   /// Helper for the CreateAndOpenScanner() implementations in the subclass. Creates and
   /// opens a new scanner for this partition type. Depending on the outcome, the
   /// behaviour differs:
@@ -814,7 +814,6 @@ Status StartScanRange(const std::vector<FilterContext>& filter_ctxs,
   /// - If the scanner cannot be created, returns an error and does not set *scanner.
   /// - If the scanner is created but opening fails, returns an error and sets *scanner.
   ///   The caller is then responsible for closing the scanner.
-//modify by ff
   Status CreateAndOpenScannerHelper(HdfsPartitionDescriptor* partition,
       ScannerContext* context, boost::scoped_ptr<HdfsScanner>* scanner)
       WARN_UNUSED_RESULT;

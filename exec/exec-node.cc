@@ -83,6 +83,7 @@ Status PlanNode::Init(const TPlanNode& tnode, FragmentState* state) {
     RETURN_IF_ERROR(
         ScalarExpr::Create(tnode_->conjuncts, *row_descriptor_, state, &conjuncts_));
   }
+
   return Status::OK();
 }
 

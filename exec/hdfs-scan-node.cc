@@ -42,6 +42,9 @@
 #include "util/disk-info.h"
 #include "util/runtime-profile-counters.h"
 
+//modify by ff
+#include "parquet/hdfs-parquet-scanner.h"
+
 #include "common/names.h"
 
 DEFINE_int32(max_row_batches, 0,
@@ -172,7 +175,7 @@ Status HdfsScanNode::Open(RuntimeState* state) {
   return Status::OK();
 }
 //modify by ff 
-Status HdfsScanNode::OpenLocal(RuntimeState* state) {
+Status HdfsScanNode::OpenLocal(RuntimeState* state, const char* pfile, const int64_t filesize) {
   SCOPED_TIMER(runtime_profile_->total_time_counter());
   ScopedOpenEventAdder ea(this);
   RETURN_IF_ERROR(HdfsScanNodeBase::Open(state));
@@ -221,6 +224,14 @@ Status HdfsScanNode::AddDiskIoRanges(const vector<ScanRange*>& ranges,
   DCHECK_GT(shared_state_->RemainingScanRangeSubmissions(), 0);
   RETURN_IF_ERROR(reader_context_->AddScanRanges(ranges, enqueue_location));
   if (!ranges.empty()) ThreadTokenAvailableCb(runtime_state_->resource_pool());
+  return Status::OK();
+}
+
+//modify by ff
+Status HdfsScanNode::AddDiskIoRangesLocal(const vector<ScanRange*>& ranges,
+    EnqueueLocation enqueue_location) {
+  DCHECK_GT(shared_state_->RemainingScanRangeSubmissions(), 0);
+  RETURN_IF_ERROR(reader_context_->AddScanRanges(ranges, enqueue_location));
   return Status::OK();
 }
 
@@ -476,9 +487,13 @@ void HdfsScanNode::ScannerThread(bool first_thread, int64_t scanner_thread_reser
 Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> filter_ctxs, io::ScanRange* pScanRange, int64_t scanner_thread_reservation) {
   MemPool expr_results_pool(expr_mem_tracker());
 
-  bool needs_buffers;
-  RETURN_IF_ERROR(reader_context_->StartScanRange(pScanRange, &needs_buffers)) ;
-  
+  //bool needs_buffers;
+  //RETURN_IF_ERROR(reader_context_->StartScanRange(pScanRange, &needs_buffers)) ;
+  vector<HdfsFileDesc*> files;
+  HdfsFileDesc* pfile = (HdfsFileDesc*)this->GetFileDesc(0, *(pScanRange->file_string()));
+  files.push_back(pfile);
+  RETURN_IF_ERROR(HdfsParquetScanner::IssueInitialRanges(this, files, false));
+
   {
     // Prevent memory accumulating across scan ranges.
     expr_results_pool.Clear();
@@ -487,7 +502,16 @@ Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> fil
     // StartNextScanRange().  We don't want it to go to zero between the return from
     // StartNextScanRange() and the check for when all ranges are complete.
     int remaining_scan_range_submissions = shared_state_->RemainingScanRangeSubmissions();
-    ScanRange* scan_range = pScanRange;
+    ScanRange* scan_range;
+    Status status =
+        StartNextScanRange(filter_ctxs, &scanner_thread_reservation, &scan_range);
+    if (!status.ok()) {
+      unique_lock<timed_mutex> l(lock_);
+
+      // Invoke SetDoneInternal() with the error status (which shuts down the
+      // RowBatchQueue) to ensure that GetNextInternal() notices the error.
+      SetDoneInternal(status);
+    }
 
     if (scan_range != nullptr) {
       // Got a scan range. Process the range end to end (in this thread).
