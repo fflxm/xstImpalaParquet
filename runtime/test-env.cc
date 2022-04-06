@@ -148,7 +148,7 @@ int64_t TestEnv::TotalQueryMemoryConsumption() {
 }
 
 Status TestEnv::CreateQueryState(
-    int64_t query_id, const TQueryOptions* query_options, RuntimeState** runtime_state) {
+    int64_t query_id, const TQueryOptions* query_options, RuntimeState** runtime_state, int64_t reservation) {
   TQueryCtx query_ctx;
   if (query_options != nullptr) query_ctx.client_request.query_options = *query_options;
   query_ctx.query_id.hi = 0;
@@ -174,6 +174,10 @@ Status TestEnv::CreateQueryState(
   rpc_params.set_coord_state_idx(0);
   rpc_params.add_fragment_ctxs();
   rpc_params.add_fragment_instance_ctxs();
+//modify by ff
+  rpc_params.set_initial_mem_reservation_total_claims(reservation);
+  rpc_params.set_min_mem_reservation_bytes(reservation);
+
   TExecPlanFragmentInfo fragment_info;
   fragment_info.__set_fragments(vector<TPlanFragment>({TPlanFragment()}));
   fragment_info.__set_fragment_instance_ctxs(

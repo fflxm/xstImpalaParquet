@@ -64,8 +64,9 @@ class TestEnv {
   /// The states are owned by the TestEnv. Returns an error if CreateQueryState() has
   /// been called with the same query ID already. 'runtime_state' is set to the newly
   /// created RuntimeState. The QueryState can be obtained via 'runtime_state'.
+// modify by ff 
   Status CreateQueryState(
-      int64_t query_id, const TQueryOptions* query_options, RuntimeState** runtime_state);
+      int64_t query_id, const TQueryOptions* query_options, RuntimeState** runtime_state, int64_t reservation=65536);
 
   /// Destroy all query states and associated RuntimeStates, etc, that were created since
   /// the last TearDownQueries() call.

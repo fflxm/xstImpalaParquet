@@ -131,6 +131,9 @@ class SlotDescriptor {
   int llvm_field_idx() const { return slot_idx_; }
 
   int tuple_offset() const { return tuple_offset_; }
+
+  //modify by ff
+  void setTupleOffset(int tuple_offset){ tuple_offset_ = tuple_offset;}
   const NullIndicatorOffset& null_indicator_offset() const {
     return null_indicator_offset_;
   }
@@ -181,7 +184,7 @@ class SlotDescriptor {
   const TupleDescriptor* children_tuple_descriptor_;
   // TODO for 2.3: rename to materialized_path_
   const SchemaPath col_path_;
-  const int tuple_offset_;
+  int tuple_offset_;
   const NullIndicatorOffset null_indicator_offset_;
 
   /// the idx of the slot in the tuple descriptor (0-based).
@@ -342,8 +345,8 @@ class HdfsTableDescriptor : public TableDescriptor {
 
   bool IsIcebergTable() const { return is_iceberg_; }
   const std::string& IcebergTableLocation() const { return iceberg_table_location_; }
-  const std::vector<std::string>& IcebergPartitionNames() const {
-    return iceberg_partition_names_;
+  const std::vector<std::string>& IcebergNonVoidPartitionNames() const {
+    return iceberg_non_void_partition_names_;
   }
   const TCompressionCodec& IcebergParquetCompressionCodec() const {
     return iceberg_parquet_compression_codec_;
@@ -374,7 +377,7 @@ class HdfsTableDescriptor : public TableDescriptor {
   TValidWriteIdList valid_write_id_list_;
   bool is_iceberg_ = false;
   std::string iceberg_table_location_;
-  std::vector<std::string> iceberg_partition_names_;
+  std::vector<std::string> iceberg_non_void_partition_names_;
   TCompressionCodec iceberg_parquet_compression_codec_;
   int64_t iceberg_parquet_row_group_size_;
   int64_t iceberg_parquet_plain_page_size_;
@@ -541,12 +544,6 @@ class DescriptorTbl {
   static Status Create(ObjectPool* pool,
       const TDescriptorTableSerialized& serialized_thrift_tbl,
       DescriptorTbl** tbl) WARN_UNUSED_RESULT;
-
-//modify by ff
-static Status CreateLocal(ObjectPool* pool, 
-    const TDescriptorTable& thrift_tbl,
-    const TDescriptorTableSerialized& serialized_thrift_tbl, 
-    DescriptorTbl** tbl) WARN_UNUSED_RESULT;
 
   /// Free memory allocated in Create().
   void ReleaseResources();
