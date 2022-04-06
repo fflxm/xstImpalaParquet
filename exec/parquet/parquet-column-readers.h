@@ -70,6 +70,11 @@ class ParquetColumnReader {
   int def_level() const { return def_level_; }
   int rep_level() const { return rep_level_; }
 
+  //modify by ff
+  void setTupleOffset(const int tuple_offset) { 
+    tuple_offset_ = tuple_offset; 
+    };
+
   const SlotDescriptor* slot_desc() const { return slot_desc_; }
   const parquet::SchemaElement& schema_element() const { return *node_.element; }
   int16_t max_def_level() const { return max_def_level_; }
@@ -213,7 +218,9 @@ class ParquetColumnReader {
   // Cache frequently accessed members of slot_desc_ for perf.
 
   /// slot_desc_->tuple_offset(). -1 if slot_desc_ is NULL.
-  const int tuple_offset_;
+  //const int tuple_offset_;
+  //modify by ff
+  int tuple_offset_;
 
   /// slot_desc_->null_indicator_offset(). Invalid if slot_desc_ is NULL.
   const NullIndicatorOffset null_indicator_offset_;
