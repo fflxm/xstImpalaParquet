@@ -44,26 +44,34 @@
 using namespace parquet;
 using namespace impala;
 
+struct colData {
+  string colname;
+  PrimitiveType coltype;
+};
+
 class CParquetFileProccess {
  public:
   CParquetFileProccess(char* filename, int64_t file_size, int64_t threadnum) : pfile_(filename),file_size_(file_size),threadnum_(threadnum) {};
   ~CParquetFileProccess(){};
     
-  Status process() {
+  Status Process(vector<colData> vcol) {
     cout << "=========="<< __func__ <<" begin=========="<< endl;
-    RETURN_IF_ERROR(CreateTestEnv(64 * 1024, 4L * 1024 * 1024 * 1024));
+    for(int i=0; i<file_size_; i++){
+      file_page_size_ = 1024 << i;
+      if(file_page_size_ > file_size_) break;
+    }
 
+    if(file_page_size_ > 64*1024){
+      RETURN_IF_ERROR(CreateTestEnv());
+    }else{
+      RETURN_IF_ERROR(CreateTestEnv(file_page_size_, 4L * 1024 * file_page_size_));
+    }
     ObjectPool* obj_pool = runtime_state_->query_state()->obj_pool();
 
-    DescriptorTblBuilder builder(obj_pool);
-    TTableDescriptor table_desc;
-    CreateDescriptor(&table_desc);
-    builder.SetTableDescriptor(table_desc);
-    builder.DeclareTuple() << TYPE_BIGINT << TYPE_BIGINT << TYPE_BIGINT << TYPE_BIGINT << TYPE_DOUBLE << TYPE_DOUBLE << TYPE_DOUBLE << TYPE_DOUBLE << TYPE_STRING << TYPE_STRING << TYPE_DATE << TYPE_DATE << TYPE_DATE << TYPE_STRING << TYPE_STRING << TYPE_STRING;
-    DescriptorTbl* desc_tbl = builder.BuildLocal();
-    cout << desc_tbl->DebugString() << endl;
+    DescriptorTbl* desc_tbl = nullptr;
+    CreateDescriptor(obj_pool, vcol, &desc_tbl);
 
-    TPlanNode* tnode = CreateNode();
+    TPlanNode* tnode = CreateNode(desc_tbl);
 
     QueryState* qs = runtime_state_->query_state();
     qs->Set_desc_tbl(desc_tbl);
@@ -72,23 +80,22 @@ class CParquetFileProccess {
 
 //    HdfsScanPlanNode* pnode = new HdfsScanPlanNode();
 //    RETURN_IF_ERROR(pnode->Init(*tnode, fragment_state_));
-HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
+    HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
 
-///////////////////////////
     HdfsScanNode* pHdfsScanNode = new HdfsScanNode(obj_pool, *pnode, *desc_tbl);
     RETURN_IF_ERROR(pHdfsScanNode->Prepare(runtime_state_));
-    RETURN_IF_ERROR(pHdfsScanNode->OpenLocal(runtime_state_));
+    RETURN_IF_ERROR(pHdfsScanNode->OpenLocal(runtime_state_, pfile_, file_size_));
 
     int64_t len = file_size_;
     uint8_t data[len];
     uint8_t* pdata = data;
-    memset(&data, 0x0, len);
+  //  memset(&data, 0x0, len);
     io::BufferOpts buffer_opts = io::BufferOpts::ReadInto(io::BufferOpts::NO_CACHING, pdata, len);
 
     ScanRangeMetadata ori_meta_data(0, nullptr);
-    io::ScanRange* pOriRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &ori_meta_data, 0, false, 1105, buffer_opts);
+    io::ScanRange* pOriRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &ori_meta_data, 0, false, 0, buffer_opts);
     ScanRangeMetadata meta_data(0, pOriRange);
-    io::ScanRange* pScanRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &meta_data, 0, false, 1105, buffer_opts);
+    io::ScanRange* pScanRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &meta_data, 0, false, 0, buffer_opts);
 
     struct timeval tv;
     gettimeofday(&tv,NULL);
@@ -96,7 +103,7 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
 
     vector<FilterContext> filter_ctxs;
 //    int64_t scanner_thread_reservation = 131072;
-    int64_t scanner_thread_reservation = 17621789490;
+    int64_t scanner_thread_reservation = 0;
     Status aa = pHdfsScanNode->ScannerLocal(runtime_state_, filter_ctxs, pScanRange, scanner_thread_reservation);
     if (!aa.ok()) {
       if(pHdfsScanNode != nullptr) delete pHdfsScanNode;
@@ -124,6 +131,7 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
  private:
   char* pfile_ = nullptr;
   int64_t file_size_ = 0;
+  int64_t file_page_size_ = 0;
   int64_t threadnum_ = 0;
   unique_ptr<TestEnv> test_env_;
   RuntimeState* runtime_state_ = nullptr;
@@ -142,13 +150,14 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
     query_options.__set_buffer_pool_limit(buffer_bytes_limit);
     query_options.__set_parquet_late_materialization_threshold(1105);
     query_options.__set_parquet_fallback_schema_resolution(TSchemaResolutionStrategy::NAME);
+    //query_options.__set_batch_size(file_page_size_);
     // Also initializes runtime_state_
-    RETURN_IF_ERROR(test_env_->CreateQueryState(1105, &query_options, &runtime_state_));
+    RETURN_IF_ERROR(test_env_->CreateQueryState(1105, &query_options, &runtime_state_, file_page_size_));
     cout << "=========="<< __func__ <<" end=========="<< endl;
     return Status::OK();
   }
 
-  TPlanNode* CreateNode() {
+  TPlanNode* CreateNode(DescriptorTbl* desc_tbl) {
     cout << "=========="<< __func__ <<" begin=========="<< endl;
 
     TPlanNode* tnode = new TPlanNode();
@@ -157,22 +166,26 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
     tnode->__set_node_id(0);
     tnode->__set_limit(-1);
       vector<TTupleId> val;
-      val.push_back((TTupleId) 0);
-    tnode->__set_row_tuples(val);
       vector<bool> bval;
-      bval.push_back(true);
+      vector<TupleDescriptor*> descs;
+      desc_tbl->GetTupleDescs(&descs);
+      for(int i=0; i<descs.size(); i++){
+        val.push_back(descs[i]->id());
+        bval.push_back(true);
+      }
+    tnode->__set_row_tuples(val);
     tnode->__set_nullable_tuples(bval);
       THdfsScanNode thsn;
       thsn.__set_tuple_id((TTupleId) 0);
       thsn.__set_use_mt_scan_node(false);
       thsn.__set_stats_tuple_id((TTupleId) 0);
-      thsn.__set_is_partition_key_scan(true);
+      thsn.__set_is_partition_key_scan(false);
     tnode->__set_hdfs_scan_node(thsn);
       TBackendResourceProfile trpf;
-      trpf.__set_min_reservation(0);
-      trpf.__set_max_reservation(65536);
-      trpf.__set_spillable_buffer_size(65536);
-      trpf.__set_max_row_buffer_size(65536);
+      trpf.__set_min_reservation(file_page_size_);
+      trpf.__set_max_reservation(4L * 1024 * file_page_size_);
+      trpf.__set_spillable_buffer_size(4L * 1024 * file_page_size_);
+      trpf.__set_max_row_buffer_size(4L * 1024 * file_page_size_);
     tnode->__set_resource_profile(trpf);
 
     cout << "=========="<< __func__ <<" end=========="<< endl;
@@ -292,14 +305,14 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
       tds.__set_resource_profile(tbrp);
     tpf.__set_output_sink(tds);
     tpf.__set_partition(tdp);
-    tpf.__set_backend_min_mem_reservation_bytes(1105);
+/*    tpf.__set_backend_min_mem_reservation_bytes(1105);
     tpf.__set_instance_min_mem_reservation_bytes(1105);
     tpf.__set_instance_initial_mem_reservation_total_claims(1105);
     tpf.__set_backend_initial_mem_reservation_total_claims(1105);
     tpf.__set_produced_runtime_filters_reservation_bytes(1105);
     tpf.__set_consumed_runtime_filters_reservation_bytes(1105);
     tpf.__set_thread_reservation(1105);
-    vector<TPlanFragment> vpf;
+*/    vector<TPlanFragment> vpf;
     vpf.push_back(tpf);
 
 //    PlanFragmentCtxPB fragment_ctx;
@@ -356,7 +369,7 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
     *instance_ctx_pb->mutable_per_node_scan_ranges() = srmap;
     PlanFragmentCtxPB* fragment_ctxs = request.add_fragment_ctxs();
     fragment_ctxs->set_fragment_idx(0);
-    request.set_initial_mem_reservation_total_claims(0);
+    request.set_initial_mem_reservation_total_claims(4L * 1024 * file_page_size_);
 
     QueryState* qs = runtime_state_->query_state();
     Status bb = qs->CreateFragmentStateMapLocal(&fragment_info, &request);
@@ -368,37 +381,27 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
     cout << "=========="<< __func__ <<" end=========="<< endl;
   }
 
-  void CreateDescriptor(TTableDescriptor *ttable) {
+  void CreateDescriptor(ObjectPool* obj_pool, vector<colData> vcol,DescriptorTbl** desc_tbl) {
     cout << "=========="<< __func__ <<" begin=========="<< endl;
+    DescriptorTblBuilder builder(obj_pool);
+    TTableDescriptor table_desc;
 
-    ttable->__set_id((TTableId) 0);
-    ttable->__set_tableType(TTableType::HDFS_TABLE);
-    ttable->__set_numClusteringCols(0);
+    table_desc.__set_id((TTableId) 0);
+    table_desc.__set_tableType(TTableType::HDFS_TABLE);
+    table_desc.__set_numClusteringCols(0);
 ////////////////
       THdfsTable tht;
       tht.__set_hdfsBaseDir(pfile_);
         vector<string> vcn;
-        vcn.push_back("l_orderkey");
-        vcn.push_back("l_partkey");
-        vcn.push_back("l_suppkey");
-        vcn.push_back("l_linenumber");
-        vcn.push_back("l_quantity");
-        vcn.push_back("l_extendedprice");
-        vcn.push_back("l_discount");
-        vcn.push_back("l_tax");
-        vcn.push_back("l_returnflag");
-        vcn.push_back("l_linestatus");
-        vcn.push_back("l_shipdate");
-        vcn.push_back("l_commitdate");
-        vcn.push_back("l_receiptdate");
-        vcn.push_back("l_shipinstruct");
-        vcn.push_back("l_shipmode");
-        vcn.push_back("l_comment");
+        for (int i=0; i<vcol.size(); i++)
+        {
+          vcn.push_back(vcol[i].colname);
+        }
       tht.__set_colNames(vcn);
-      tht.__set_nullPartitionKeyValue("l_orderkey");
-      tht.__set_nullColumnValue("l_orderkey");
+      tht.__set_nullPartitionKeyValue("1105");
+      tht.__set_nullColumnValue("1105");
         THdfsPartition thp;
-          TExpr te;
+/*          TExpr te;
             TExprNode ten;
             ten.__set_node_type(TExprNodeType::NULL_LITERAL);
 //            ten.__set_type(tcype1);
@@ -500,12 +503,13 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
           memcpy(&texpr_, &te, sizeof(TExpr));
 
 //        thp.__set_partitionKeyExprs(vte);
+*/
           THdfsPartitionLocation tpl;
           tpl.__set_prefix_index(-1);
           tpl.__set_suffix(pfile_);
         thp.__set_location(tpl);
         thp.__set_id(0);
-        thp.__set_prev_id(1105);
+        thp.__set_prev_id(0);
           THdfsFileDesc hfd;
           hfd.__set_file_desc_data(pfile_);
           vector<THdfsFileDesc> vhfd;
@@ -528,8 +532,8 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
         thp.__set_has_incremental_stats(false);
         thp.__set_write_id(1105);
         thp.__set_db_name("test");
-        thp.__set_tbl_name("lineitem");
-        thp.__set_partition_name("lineitem");
+        thp.__set_tbl_name("test");
+        thp.__set_partition_name("test");
           THdfsStorageDescriptor thsd;
           thsd.__set_lineDelim(1);
           thsd.__set_fieldDelim(1);
@@ -545,9 +549,9 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
 
       tht.__set_partitions(thpamp);
       tht.__set_has_full_partitions(false);
-      tht.__set_has_partition_names("l_orderkey");
+      tht.__set_has_partition_names("test");
       tht.__set_prototype_partition(thp);
-      tht.__set_partition_prefixes(vector<string>(1,"l_orderkey"));
+/*      tht.__set_partition_prefixes(vector<string>(1,"test"));
         TNetworkAddress tnwa;
         tnwa.__set_hostname("loacalhost");
         tnwa.__set_port(1105);
@@ -555,7 +559,7 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
         TSqlConstraints tscon;
           Apache::Hadoop::Hive::SQLPrimaryKey spk;
           spk.__set_table_db("test");
-          spk.__set_table_name("lineitem");
+          spk.__set_table_name("test");
           spk.__set_column_name("testclo");
           spk.__set_key_seq(1105);
           spk.__set_pk_name("spk");
@@ -588,18 +592,28 @@ HdfsScanPlanNode* pnode = (HdfsScanPlanNode*)fragment_state_->plan_tree();
         tvwlist.__set_min_open_write_id(1105);
         tvwlist.__set_invalid_write_ids(vector<int64_t>(1,1105));
         tvwlist.__set_aborted_indexes(vector<int32_t>(1,1105));
-      tht.__set_valid_write_ids(tvwlist);
-    ttable->__set_hdfsTable(tht);
+      tht.__set_valid_write_ids(tvwlist);*/
+    table_desc.__set_hdfsTable(tht);
 
-    ttable->__set_tableName("lineitem");
-    ttable->__set_dbName("test");
+    table_desc.__set_tableName("test");
+    table_desc.__set_dbName("test");
+
+    vector<string> vname;
+    builder.SetTableDescriptor(table_desc);
+    for(int i=0; i<vcol.size(); i++)
+    {
+      builder.DeclareTuple() << vcol[i].coltype;
+      vname.push_back(vcol[i].colname);
+    }
+    *desc_tbl = builder.BuildLocal(vname);
+    cout << (*desc_tbl)->DebugString() << endl;
 
     cout << "=========="<< __func__ <<" end=========="<< endl;
   }
 };
 
 int main(int argc, char* argv[]){
-    //impala::InitCommonRuntime(argc, argv, false, impala::TestInfo::BE_TEST);
+    impala::InitCommonRuntime(argc, argv, false, impala::TestInfo::BE_TEST);
 
     if (argc <= 2) {
         cout << "Must specify input file." << endl;
@@ -616,7 +630,22 @@ int main(int argc, char* argv[]){
 
     CParquetFileProccess aa(argv[1],file_len,tnum);
 
-    Status ss = aa.process();
+    vector<colData> vCol;
+    colData col1,col2,col3;
+    memset(&col1, 0, sizeof(colData));
+    col1.colname = "l_orderkey";
+    col1.coltype = TYPE_BIGINT;
+    vCol.push_back(col1);
+    memset(&col2, 0, sizeof(colData));
+    col2.colname = "l_discount";
+    col2.coltype = TYPE_DOUBLE;
+    vCol.push_back(col2);
+    memset(&col3, 0, sizeof(colData));
+    col3.colname = "l_comment";
+    col3.coltype = TYPE_STRING;
+    vCol.push_back(col3);
+
+    Status ss = aa.Process(vCol);
     if (!ss.ok()) {
       cout << "process error["<< ss.GetDetail() <<"]"<< endl;
       return -1;
