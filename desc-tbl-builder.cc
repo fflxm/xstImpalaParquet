@@ -70,7 +70,7 @@ DescriptorTbl* DescriptorTblBuilder::Build() {
   return desc_tbl;
 }
 //modify by ff
-DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
+DescriptorTbl* DescriptorTblBuilder::BuildLocal(vector<string>& vcol) {
   DCHECK(!tuples_descs_.empty());
 
   vector<TTupleDescriptor>  vtuple;
@@ -78,6 +78,7 @@ DescriptorTbl* DescriptorTblBuilder::BuildLocal() {
   vector<TColumnDescriptor> vtcc;
   TColumnDescriptor tcc;
 int j =0;
+int totalSlotSize = 0;
 //  TBuildTestDescriptorTableParams params;
   for (int i = 0; i < tuples_descs_.size(); ++i) {
 //    params.slot_types.push_back(vector<TColumnType>());
@@ -92,6 +93,9 @@ int j =0;
 //      tslot.__set_itemTupleId((TTupleId) 110501);
       tslot.__set_slotType(slot_type.ToThrift());
       tslot.__set_materializedPath(vector<int32_t>(1,j));
+
+      totalSlotSize += slot_type.GetSlotSize();
+/*
       if(j==0) tslot.__set_byteOffset(4);
       if(j==1) tslot.__set_byteOffset(147);
       if(j==2) tslot.__set_byteOffset(404);
@@ -108,23 +112,26 @@ int j =0;
       if(j==13) tslot.__set_byteOffset(2294);
       if(j==14) tslot.__set_byteOffset(2446);
       if(j==15) tslot.__set_byteOffset(2569);
-      j++;
-
+*/
       slot.push_back(tslot);
 
       memset(&tcc, 0x0, sizeof(TColumnDescriptor));
       tcc.__set_type(slot_type.ToThrift());
+      tcc.__set_name(vcol[j]);
       vtcc.push_back(tcc);
+
+      j++;
     }
-    //create tuples
-    TTupleDescriptor ttuple;
-    ttuple.__set_id((TTupleId) 0);
-    ttuple.__set_byteSize(1105);
-    ttuple.__set_numNullBytes(0);
-    ttuple.__set_tableId((TTableId) 0);
-    ttuple.__set_tuplePath(vector<int32_t>(1,0));
-    vtuple.push_back(ttuple);
   }
+  //create tuples
+  TTupleDescriptor ttuple;
+  ttuple.__set_id((TTupleId) 0);
+  ttuple.__set_byteSize(totalSlotSize+1);
+  ttuple.__set_numNullBytes(0);
+  ttuple.__set_tableId((TTableId) thrift_desc_tbl_.tableDescriptors[0].id);
+  ttuple.__set_tuplePath(vector<int32_t>(1,0));
+  vtuple.push_back(ttuple);
+
   thrift_desc_tbl_.__set_slotDescriptors(slot);
   thrift_desc_tbl_.__set_tupleDescriptors(vtuple);
   for(int j=0; j<thrift_desc_tbl_.tableDescriptors.size(); j++){
@@ -136,4 +143,5 @@ int j =0;
   DCHECK(status.ok()) << status.GetDetail();
   return desc_tbl;
 }
+
 }

@@ -55,7 +55,7 @@ class DescriptorTblBuilder {
 
   DescriptorTbl* Build();
 //modify by ff
-  DescriptorTbl* BuildLocal();
+  DescriptorTbl* BuildLocal(vector<string>& vcol);
   
  private:
   /// Both owned by caller.
