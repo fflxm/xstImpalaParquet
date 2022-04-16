@@ -15,31 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "util/bitmap.h"
+#include "util/cyclic-barrier.h"
 
-#include <sstream>
+#include <mutex>
 
 #include "common/names.h"
 
-using namespace impala;
+namespace impala {
 
-string Bitmap::DebugString(bool print_bits) const {
-  int64_t words = BitUtil::RoundUp(num_bits_, 64) / 64;
-  stringstream ss;
-  ss << "Size (" << num_bits_ << ") words (" << words << ") ";
-  if (print_bits) {
-    for (int i = 0; i < num_bits(); ++i) {
-      if (Get(i)) {
-        ss << "1";
-      } else {
-        ss << "0";
-      }
-    }
-  } else {
-    for (auto v : buffer_) {
-      ss << v << ".";
-    }
+CyclicBarrier::CyclicBarrier(int num_threads) : num_threads_(num_threads) {}
+
+void CyclicBarrier::Cancel(const Status& err) {
+  DCHECK(!err.ok());
+  {
+    lock_guard<mutex> l(lock_);
+    if (!cancel_status_.ok()) return; // Already cancelled.
+    cancel_status_ = err;
   }
-  ss << endl;
-  return ss.str();
+  barrier_cv_.NotifyAll();
 }
+} // namespace impala

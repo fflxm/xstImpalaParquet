@@ -15,31 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#include "util/bitmap.h"
+#pragma once
 
-#include <sstream>
+#include "gen-cpp/CatalogObjects_types.h"
+#include "gen-cpp/common.pb.h"
 
-#include "common/names.h"
+namespace impala {
 
-using namespace impala;
+// Convert THdfsCompression to the equivalent protobuf enum.
+CompressionTypePB THdfsCompressionToProto(const THdfsCompression::type& compression);
 
-string Bitmap::DebugString(bool print_bits) const {
-  int64_t words = BitUtil::RoundUp(num_bits_, 64) / 64;
-  stringstream ss;
-  ss << "Size (" << num_bits_ << ") words (" << words << ") ";
-  if (print_bits) {
-    for (int i = 0; i < num_bits(); ++i) {
-      if (Get(i)) {
-        ss << "1";
-      } else {
-        ss << "0";
-      }
-    }
-  } else {
-    for (auto v : buffer_) {
-      ss << v << ".";
-    }
-  }
-  ss << endl;
-  return ss.str();
-}
+// Convert CompressionTypePB to the equivalent thrift enum.
+THdfsCompression::type CompressionTypePBToThrift(const CompressionTypePB& compression);
+
+} // namespace impala
