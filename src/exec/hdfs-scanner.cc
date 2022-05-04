@@ -833,7 +833,6 @@ Status HdfsScanner::IssueFooterRanges(HdfsScanNodeBase* scan_node,
     int64_t footer_size = min(footer_size_estimate, files[i]->file_length);
     int64_t footer_start = files[i]->file_length - footer_size;
     DCHECK_GE(footer_start, 0);
-
     // Try to find the split with the footer.
     ScanRange* footer_split = FindFooterSplit(files[i]);
 

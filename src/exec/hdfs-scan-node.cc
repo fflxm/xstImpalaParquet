@@ -216,7 +216,7 @@ void HdfsScanNode::TransferToScanNodePool(MemPool* pool) {
 void HdfsScanNode::AddMaterializedRowBatch(unique_ptr<RowBatch> row_batch) {
   InitNullCollectionValues(row_batch.get());
 //modify by ff  thread_state_.EnqueueBatch(move(row_batch));
-    for (int i = 0; i < row_batch->num_rows(); ++i) {
+/*    for (int i = 0; i < row_batch->num_rows(); ++i) {
       vector<TupleDescriptor*>::const_iterator desc = row_batch->row_desc()->tuple_descriptors().begin();
       for (int j = 0; desc != row_batch->row_desc()->tuple_descriptors().end(); ++desc, ++j) {
         Tuple* tuple = row_batch->GetRow(i)->GetTuple(j);
@@ -248,7 +248,8 @@ void HdfsScanNode::AddMaterializedRowBatch(unique_ptr<RowBatch> row_batch) {
         }
         std::cout << "===>" << xst_++ << endl;
       }
-    }
+    }*/
+    //row_batch.get()->Reset();
 }
 
 Status HdfsScanNode::AddDiskIoRanges(const vector<ScanRange*>& ranges,
@@ -521,12 +522,18 @@ Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> fil
 
   //bool needs_buffers;
   //RETURN_IF_ERROR(reader_context_->StartScanRange(pScanRange, &needs_buffers)) ;
-  vector<HdfsFileDesc*> files;
-  HdfsFileDesc* pfile = (HdfsFileDesc*)this->GetFileDesc(0, *(pScanRange->file_string()));
-  files.push_back(pfile);
-  RETURN_IF_ERROR(HdfsParquetScanner::IssueInitialRangesLocal(this, files, false));
-  initial_ranges_issued_.Store(true);
-  {
+  TUniqueId tuid;
+  tuid.__set_hi(0);
+  tuid.__set_lo(0);
+  vector<HdfsFileDesc*> *files = shared_state_->GetFilesForIssuingScanRangesForInstance(tuid);
+  cout << __func__<<":files.size()="<<files->size()<< endl;
+
+  RETURN_IF_ERROR(HdfsParquetScanner::IssueInitialRangesLocal(this, *files, false));
+  ScanRange* scan_range = nullptr;
+  xst_ = 0;//modify by ff
+
+//  initial_ranges_issued_.Store(true);
+  do {
     // Prevent memory accumulating across scan ranges.
     expr_results_pool.Clear();
 
@@ -534,9 +541,7 @@ Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> fil
     // StartNextScanRange().  We don't want it to go to zero between the return from
     // StartNextScanRange() and the check for when all ranges are complete.
     int remaining_scan_range_submissions = shared_state_->RemainingScanRangeSubmissions();
-    ScanRange* scan_range;
-    Status status =
-        StartNextScanRange(filter_ctxs, &scanner_thread_reservation, &scan_range);
+    Status status = StartNextScanRange(filter_ctxs, &scanner_thread_reservation, &scan_range);
     if (!status.ok()) {
       unique_lock<timed_mutex> l(lock_);
 
@@ -546,8 +551,7 @@ Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> fil
     }
 
     if (scan_range != nullptr) {
-      xst_ = 0;//modify by ff
-      
+    cout<< __func__<<":scan_range=["<<scan_range->DebugString()<<"]"<<endl;
       // Got a scan range. Process the range end to end (in this thread).
       ProcessSplit(filter_ctxs, &expr_results_pool, scan_range, &scanner_thread_reservation);
     }
@@ -565,12 +569,8 @@ Status HdfsScanNode::ScannerLocal(RuntimeState* state, vector<FilterContext> fil
       // another thread.
       all_ranges_started_ = true;
     }
-  }
+  }while(scan_range != nullptr);
 
-  {
-    unique_lock<timed_mutex> l(lock_);
-    ReturnReservationFromScannerThread(l, scanner_thread_reservation);
-  }
   for (auto& ctx: filter_ctxs) ctx.expr_eval->Close(runtime_state_);
   //runtime_state_->resource_pool()->ReleaseThreadToken(true);
   expr_results_pool.FreeAll();
@@ -588,6 +588,7 @@ void HdfsScanNode::ProcessSplit(const vector<FilterContext>& filter_ctxs,
   DCHECK(partition != nullptr) << "table_id=" << hdfs_table_->id()
                                << " partition_id=" << partition_id
                                << "\n" << PrintThrift(runtime_state_->instance_ctx());
+          
   ScannerContext context(runtime_state_, this, buffer_pool_client(),
       *scanner_thread_reservation, partition, filter_ctxs, expr_results_pool);
   context.AddStream(scan_range, *scanner_thread_reservation);
