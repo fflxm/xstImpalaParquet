@@ -402,7 +402,8 @@ class RowBatch {
   /// Max memory that this row batch can accumulate before it is considered at capacity.
   /// This is a soft capacity: row batches may exceed the capacity, preferably only by a
   /// row's worth of data.
-  static const int AT_CAPACITY_MEM_USAGE = 8 * 1024 * 1024;
+//modify by ff  static const int AT_CAPACITY_MEM_USAGE = 8 * 1024 * 1024;
+ static const int AT_CAPACITY_MEM_USAGE =  1024 * 1024 * 1024;
 
   // Max memory out of AT_CAPACITY_MEM_USAGE that should be used for fixed-length data,
   // in order to leave room for variable-length data.
