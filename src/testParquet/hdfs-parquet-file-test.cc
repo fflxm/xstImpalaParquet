@@ -50,6 +50,9 @@ struct colData {
   PrimitiveType coltype;
 };
 
+const int splitlen = 8192*8192*4;
+const long parquet_footer_size = 100L * 1024L;
+
 class CParquetFileProccess {
  public:
   CParquetFileProccess(char* filename, int64_t file_size, int64_t threadnum) : pfile_(filename),file_size_(file_size),threadnum_(threadnum) {};
@@ -84,23 +87,23 @@ class CParquetFileProccess {
     HdfsScanNode* pHdfsScanNode = new HdfsScanNode(obj_pool, *pnode, *desc_tbl);
     RETURN_IF_ERROR(pHdfsScanNode->Prepare(runtime_state_));
     RETURN_IF_ERROR(pHdfsScanNode->OpenLocal(runtime_state_, pfile_, file_size_));
-
+/*
     io::BufferOpts buffer_opts(io::BufferOpts::NO_CACHING);
     ScanRangeMetadata ori_meta_data(0, nullptr);
     io::ScanRange* pOriRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &ori_meta_data, 0, false, 0, buffer_opts);
     ScanRangeMetadata meta_data(0, pOriRange);
     io::ScanRange* pScanRange = io::ScanRange::AllocateScanRange(obj_pool, nullptr, pfile_, file_size_, 0, {}, &meta_data, 0, false, 0, buffer_opts);
-
+*/
     struct timeval tv;
     gettimeofday(&tv,NULL);
     cout<< "begin time:tv_sec[" << tv.tv_sec <<"]tv_usec[" << tv.tv_usec <<"]" << endl;
 
     vector<FilterContext> filter_ctxs;
     int64_t scanner_thread_reservation = 0;
-    Status aa = pHdfsScanNode->ScannerLocal(runtime_state_, filter_ctxs, pScanRange, scanner_thread_reservation);
+    Status aa = pHdfsScanNode->ScannerLocal(runtime_state_, filter_ctxs, nullptr, scanner_thread_reservation);
     if (!aa.ok()) {
       if(pHdfsScanNode != nullptr) delete pHdfsScanNode;
-      return Status(Substitute("ScannerLocal error: process Range $0 error", pScanRange->DebugString()));
+      return Status(Substitute("ScannerLocal error: process Range error"));
     }
 
     struct timeval tvend;
@@ -108,7 +111,7 @@ class CParquetFileProccess {
     cout<< "end time:tv_sec[" << tvend.tv_sec <<"]tv_usec[" << tvend.tv_usec <<"]" << endl;
 
     float timeused = (tvend.tv_sec- tv.tv_sec)*1000000+(tvend.tv_usec-tv.tv_usec);
-    cout<< "used:" << timeused << endl;
+    cout<< "used usec:" << timeused << endl;
 
     pHdfsScanNode->Close(runtime_state_);
     cout << "=========="<< __func__ <<" end=========="<< endl;
@@ -138,7 +141,7 @@ class CParquetFileProccess {
     query_options.__set_buffer_pool_limit(buffer_bytes_limit);
     query_options.__set_parquet_late_materialization_threshold(1105);
     query_options.__set_parquet_fallback_schema_resolution(TSchemaResolutionStrategy::NAME);
-    //query_options.__set_batch_size(2048);
+    query_options.__set_batch_size(1024*1024*128);
     // Also initializes runtime_state_
     RETURN_IF_ERROR(test_env_->CreateQueryState(1105, &query_options, &runtime_state_, file_page_size_));
     cout << "=========="<< __func__ <<" end=========="<< endl;
@@ -191,105 +194,6 @@ class CParquetFileProccess {
         vpn.push_back(tnode);
       tp.__set_nodes(vpn);    
     tpf.__set_plan(tp);
-      TDataSink tds;
-      tds.__set_type(TDataSinkType::TABLE_SINK);
-        TDataStreamSink tdss;
-        tdss.__set_dest_node_id((TPlanNodeId) 0);
-          TDataPartition tdp;
-          tdp.__set_type(TPartitionType::UNPARTITIONED);
-            vector<TExpr> vte;
-          //  vte.push_back(texpr_);
-          tdp.__set_partition_exprs(vte);
-        tdss.__set_output_partition(tdp);
-      tds.__set_stream_sink(tdss);
-        TTableSink tts;
-        tts.__set_target_table_id((TTableId)0);
-        tts.__set_type(TTableSinkType::HDFS);
-        tts.__set_action(TSinkAction::INSERT);
-          THdfsTableSink hts;
-          hts.__set_partition_key_exprs(vte);
-          hts.__set_overwrite(true);
-          hts.__set_skip_header_line_count(1105);
-          hts.__set_input_is_clustered(true);
-            vector<int32_t>  vhhhh;
-            vhhhh.push_back(1105);
-          hts.__set_sort_columns(vhhhh);
-          hts.__set_write_id(1105);
-          hts.__set_sorting_order(TSortingOrder::LEXICAL);
-          hts.__set_is_result_sink(true);
-          hts.__set_external_output_dir("/dev/null");
-          hts.__set_external_output_partition_depth(1105);
-            map<string, int64_t> str11222;
-            str11222.insert(make_pair("test",0));
-          hts.__set_parquet_bloom_filter_col_info(str11222);
-        tts.__set_hdfs_table_sink(hts);
-      tds.__set_table_sink(tts);
-        TJoinBuildSink Tjbs;
-        Tjbs.__set_dest_node_id((TPlanNodeId) 0);
-        Tjbs.__set_join_op(TJoinOp::INNER_JOIN);
-          TEqJoinCondition tejc;
-          tejc.__set_left(texpr_);
-          tejc.__set_right(texpr_);
-          tejc.__set_is_not_distinct_from(false);
-          vector<TEqJoinCondition> vejc;
-          vejc.push_back(tejc);
-        Tjbs.__set_eq_join_conjuncts(vejc);
-          TRuntimeFilterDesc trfd;
-          trfd.__set_filter_id(1105);
-          trfd.__set_src_expr(texpr_);
-            TRuntimeFilterTargetDesc trftd;
-            trftd.__set_node_id((TPlanNodeId) 0);
-            trftd.__set_target_expr(texpr_);
-            trftd.__set_is_bound_by_partition_columns(false);
-            trftd.__set_target_expr_slotids(vector<TSlotId>(1,(TSlotId)1105));
-            trftd.__set_is_local_target(false);
-              TColumnValue tcv;
-              tcv.__set_int_val(0);
-            trftd.__set_low_value(tcv);
-              tcv.__set_int_val(1105);
-            trftd.__set_high_value(tcv);
-            trftd.__set_is_min_max_value_present(false);
-            trftd.__set_is_column_in_data_file(false);
-            vector<TRuntimeFilterTargetDesc>  vrftd;
-            vrftd.push_back(trftd);
-          trfd.__set_targets(vrftd);
-            map< TPlanNodeId, int32_t> mal111;
-            mal111.insert(make_pair((TPlanNodeId)1105,0));
-          trfd.__set_planid_to_target_ndx(mal111);
-          trfd.__set_is_broadcast_join(false);
-          trfd.__set_has_local_targets(false);
-          trfd.__set_has_remote_targets(false);
-          trfd.__set_applied_on_partition_columns(false);
-          trfd.__set_ndv_estimate(1105);
-          trfd.__set_type(TRuntimeFilterType::BLOOM);
-          trfd.__set_compareOp(extdatasource::TComparisonOp::NE);
-          trfd.__set_filter_size_bytes(1105);
-          trfd.__set_src_node_id((TPlanNodeId) 0);
-          vector<TRuntimeFilterDesc> vrfd;
-          vrfd.push_back(trfd);
-        Tjbs.__set_runtime_filters(vrfd);
-        Tjbs.__set_hash_seed(1105);
-        Tjbs.__set_share_build(false);
-      tds.__set_join_build_sink(Tjbs);
-        TPlanRootSink plan_root_sink;
-          TBackendResourceProfile tbrp;
-          tbrp.__set_min_reservation(2*8192);
-          tbrp.__set_max_reservation(4*8192);
-          tbrp.__set_spillable_buffer_size(1105);
-          tbrp.__set_max_row_buffer_size(1105);
-          plan_root_sink.__set_resource_profile(tbrp);
-      tds.__set_plan_root_sink(plan_root_sink);
-      tds.__set_label("test");
-        TExecStats tes11;
-        tes11.__set_latency_ns(1);
-        tes11.__set_cpu_time_ns(1);
-        tes11.__set_cardinality(2);
-        tes11.__set_memory_used(1024);
-      tds.__set_estimated_stats(tes11);
-      tds.__set_output_exprs(vte);
-      tds.__set_resource_profile(tbrp);
-    tpf.__set_output_sink(tds);
-    tpf.__set_partition(tdp);
     vector<TPlanFragment> vpf;
     vpf.push_back(tpf);
 
@@ -300,14 +204,7 @@ class CParquetFileProccess {
       tuid.__set_lo(0);
     tpfic.__set_fragment_instance_id(tuid);
     tpfic.__set_per_fragment_instance_idx(1105);
-    tpfic.__set_per_exch_num_senders(mal111);
     tpfic.__set_sender_id(1105);
-      TDebugOptions tdoption;
-      tdoption.__set_node_id((TPlanNodeId) 0);
-      tdoption.__set_phase(TExecNodePhase::GETNEXT);
-      tdoption.__set_action(TDebugAction::DELAY);
-      tdoption.__set_action_param("test");
-    tpfic.__set_debug_options(tdoption);
       TRuntimeFilterSource trfs;
       trfs.__set_src_node_id((TPlanNodeId) 0);
       trfs.__set_filter_id(1105);
@@ -327,7 +224,39 @@ class CParquetFileProccess {
     PlanFragmentInstanceCtxPB* instance_ctx_pb = request.add_fragment_instance_ctxs();
       ::google::protobuf::Map< ::google::protobuf::int32, ::impala::ScanRangesPB > srmap;
         ScanRangesPB srspb;
-        ::impala::ScanRangeParamsPB* insSrPB = srspb.add_scan_ranges();
+
+        int offset = 0;
+        for(offset = 0; ((offset+1) * splitlen) <= file_size_; offset++ ){
+          ::impala::ScanRangeParamsPB* insSrPB = srspb.add_scan_ranges();
+            ScanRangePB srpb;
+              HdfsFileSplitPB hdfs_file_split;
+              hdfs_file_split.set_partition_id(offset);
+              hdfs_file_split.set_file_length(file_size_);
+              //hdfs_file_split.set_relative_path(pfile_);
+              hdfs_file_split.set_mtime(1105);
+              //hdfs_file_split.set_file_compression();
+              hdfs_file_split.set_offset(offset * splitlen);
+              hdfs_file_split.set_length(splitlen);
+            *srpb.mutable_hdfs_file_split() = hdfs_file_split;
+          *insSrPB->mutable_scan_range() = srpb;
+        }
+
+        int lastlength = file_size_ - (offset * splitlen) - parquet_footer_size ;
+        if(lastlength > 0 ){
+          ::impala::ScanRangeParamsPB* insSrPB = srspb.add_scan_ranges();
+            ScanRangePB srpb;
+              HdfsFileSplitPB hdfs_file_split;
+              hdfs_file_split.set_partition_id(offset);
+              hdfs_file_split.set_file_length(file_size_);
+              //hdfs_file_split.set_relative_path(pfile_);
+              hdfs_file_split.set_mtime(1105);
+              //hdfs_file_split.set_file_compression();
+              hdfs_file_split.set_offset(offset * splitlen);
+              hdfs_file_split.set_length(lastlength);
+            *srpb.mutable_hdfs_file_split() = hdfs_file_split;
+          *insSrPB->mutable_scan_range() = srpb;
+        }
+/*        ::impala::ScanRangeParamsPB* insSrPB = srspb.add_scan_ranges();
           ScanRangePB srpb;
             HdfsFileSplitPB hdfs_file_split;
             hdfs_file_split.set_partition_id(0);
@@ -338,7 +267,7 @@ class CParquetFileProccess {
             hdfs_file_split.set_offset(0);
             hdfs_file_split.set_length(file_size_);
           *srpb.mutable_hdfs_file_split() = hdfs_file_split;
-        *insSrPB->mutable_scan_range() = srpb;
+        *insSrPB->mutable_scan_range() = srpb;*/
       srmap.insert({0, srspb});
     *instance_ctx_pb->mutable_per_node_scan_ranges() = srmap;
     PlanFragmentCtxPB* fragment_ctxs = request.add_fragment_ctxs();
@@ -374,6 +303,67 @@ class CParquetFileProccess {
       tht.__set_colNames(vcn);
       tht.__set_nullPartitionKeyValue("1105");
       tht.__set_nullColumnValue("1105");
+        map<int64_t, THdfsPartition> thpamp;
+        int offset = 0;
+        for(offset = 0; (offset * splitlen) <= file_size_; offset++ ){
+          THdfsPartition thp;
+            THdfsPartitionLocation tpl;
+            tpl.__set_prefix_index(-1);
+            tpl.__set_suffix(pfile_);
+          thp.__set_location(tpl);
+          thp.__set_id(offset);
+          thp.__set_prev_id(offset);
+            THdfsFileDesc hfd;
+            hfd.__set_file_desc_data(pfile_);
+            vector<THdfsFileDesc> vhfd;
+            vhfd.push_back(hfd);
+          thp.__set_file_desc(vhfd);
+          thp.__set_insert_file_desc(vhfd);
+          thp.__set_delete_file_desc(vhfd);
+          thp.__set_access_level(TAccessLevel::READ_WRITE);
+            TTableStats ts;
+            ts.__set_num_rows(file_size_);
+            ts.__set_total_file_bytes(file_size_);
+          thp.__set_stats(ts);
+          thp.__set_is_marked_cached(false);
+          thp.__set_total_file_size_bytes(file_size_);
+            THdfsStorageDescriptor thsd;
+            thsd.__set_fileFormat(THdfsFileFormat::PARQUET);
+            thsd.__set_blockSize(file_size_);
+          thp.__set_hdfs_storage_descriptor(thsd);
+          thpamp.insert(make_pair(offset, thp));
+        }
+
+        int lastlength = file_size_ - ((offset-1) * splitlen);
+        if(lastlength > 0 ){
+          THdfsPartition thp;
+            THdfsPartitionLocation tpl;
+            tpl.__set_prefix_index(-1);
+            tpl.__set_suffix(pfile_);
+          thp.__set_location(tpl);
+          thp.__set_id(offset-1);
+          thp.__set_prev_id(offset-1);
+            THdfsFileDesc hfd;
+            hfd.__set_file_desc_data(pfile_);
+            vector<THdfsFileDesc> vhfd;
+            vhfd.push_back(hfd);
+          thp.__set_file_desc(vhfd);
+          thp.__set_insert_file_desc(vhfd);
+          thp.__set_delete_file_desc(vhfd);
+          thp.__set_access_level(TAccessLevel::READ_WRITE);
+            TTableStats ts;
+            ts.__set_num_rows(file_size_);
+            ts.__set_total_file_bytes(file_size_);
+          thp.__set_stats(ts);
+          thp.__set_is_marked_cached(false);
+          thp.__set_total_file_size_bytes(file_size_);
+            THdfsStorageDescriptor thsd;
+            thsd.__set_fileFormat(THdfsFileFormat::PARQUET);
+            thsd.__set_blockSize(file_size_);
+          thp.__set_hdfs_storage_descriptor(thsd);
+          thpamp.insert(make_pair(offset-1, thp));
+        }
+/*
         THdfsPartition thp;
           THdfsPartitionLocation tpl;
           tpl.__set_prefix_index(-1);
@@ -394,34 +384,18 @@ class CParquetFileProccess {
           ts.__set_total_file_bytes(file_size_);
         thp.__set_stats(ts);
         thp.__set_is_marked_cached(false);
-        map<string, string> str11;
-        str11.insert(make_pair("1","1"));
-        thp.__set_hms_parameters(str11);
-        thp.__set_num_blocks(1024);
         thp.__set_total_file_size_bytes(file_size_);
-        thp.__set_partition_stats("ok");
-        thp.__set_has_incremental_stats(false);
-        thp.__set_write_id(1105);
-        thp.__set_db_name("test");
-        thp.__set_tbl_name("test");
-        thp.__set_partition_name("test");
           THdfsStorageDescriptor thsd;
-          thsd.__set_lineDelim(1);
-          thsd.__set_fieldDelim(1);
-          thsd.__set_collectionDelim(1);
-          thsd.__set_mapKeyDelim(1);
-          thsd.__set_escapeChar(1);
-          thsd.__set_quoteChar(1);
           thsd.__set_fileFormat(THdfsFileFormat::PARQUET);
           thsd.__set_blockSize(file_size_);
         thp.__set_hdfs_storage_descriptor(thsd);
         map<int64_t, THdfsPartition> thpamp;
         thpamp.insert(make_pair(0, thp));
-
+*/
       tht.__set_partitions(thpamp);
       tht.__set_has_full_partitions(false);
       tht.__set_has_partition_names("test");
-      tht.__set_prototype_partition(thp);
+//      tht.__set_prototype_partition(thp);
     table_desc.__set_hdfsTable(tht);
 
     table_desc.__set_tableName("test");
